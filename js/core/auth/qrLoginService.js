@@ -1,5 +1,6 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY, TV_LOGIN_REDIRECT_BASE_URL } from "../../config.js";
 import { Environment } from "../../platform/environment.js";
+import { Platform } from "../../platform/index.js";
 import { SessionStore } from "../storage/sessionStore.js";
 import { AuthManager } from "./authManager.js";
 import { AuthState } from "./authState.js";
@@ -224,7 +225,7 @@ async function ensureQrSessionAuthenticated() {
       method: "POST",
       headers: commonHeaders,
       body: JSON.stringify({
-        data: { tv_client: "webos" }
+        data: { tv_client: Platform.getName() || "browser" }
       })
     });
     const text = await response.text();
