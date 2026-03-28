@@ -1,9 +1,11 @@
 import { browserAdapter } from "./adapters/browserAdapter.js";
+import { desktopAdapter } from "./adapters/desktopAdapter.js";
 import { webosAdapter } from "./adapters/webosAdapter.js";
 import { tizenAdapter } from "./adapters/tizenAdapter.js";
 
 const ADAPTERS = {
   browser: browserAdapter,
+  desktop: desktopAdapter,
   webos: webosAdapter,
   tizen: tizenAdapter
 };
@@ -55,6 +57,9 @@ function detectPlatformName() {
   if (override && ADAPTERS[override]) {
     return override;
   }
+  if (globalThis.__TAURI_INTERNALS__) {
+    return "desktop";
+  }
   if (globalThis.webOS || globalThis.PalmSystem || globalThis.webOSSystem) {
     return "webos";
   }
@@ -97,6 +102,10 @@ export const Platform = {
 
   isTizen() {
     return this.getName() === "tizen";
+  },
+
+  isDesktop() {
+    return this.getName() === "desktop";
   },
 
   isBrowser() {

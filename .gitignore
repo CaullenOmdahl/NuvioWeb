@@ -11,6 +11,7 @@ webOSTVjs-1.2.12/*
 
 # Build output
 dist/
+src-tauri/target/
 .cache/
 .pm2/
 logs/

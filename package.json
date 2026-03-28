@@ -10,9 +10,13 @@
     "sync": "node ./scripts/sync-wrapper.mjs",
     "sync:tizen": "node ./scripts/sync-wrapper.mjs --tizen",
     "sync:webos": "node ./scripts/sync-wrapper.mjs --webos",
-    "sync:tizenbrew": "node ./scripts/sync-tizenbrew.mjs"
+    "sync:tizenbrew": "node ./scripts/sync-tizenbrew.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1",
     "esbuild": "^0.27.3"
   }
 }
