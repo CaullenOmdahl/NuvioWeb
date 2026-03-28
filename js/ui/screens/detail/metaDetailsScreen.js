@@ -1107,7 +1107,7 @@ export const MetaDetailsScreen = {
       progressMap.set(key, entry);
       const position = Number(entry?.positionMs || 0);
       const duration = Number(entry?.durationMs || 0);
-      if (duration > 0 && position >= duration) {
+      if (duration > 0 && position / duration > 0.85) {
         watchedKeys.add(key);
       }
     });
