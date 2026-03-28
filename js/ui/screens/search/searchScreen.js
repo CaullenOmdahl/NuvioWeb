@@ -1008,8 +1008,10 @@ export const SearchScreen = {
     if (!input || input.__boundSearchListeners) return;
     input.__boundSearchListeners = true;
 
-    input.addEventListener("input", (event) => {
-      this.query = trimLeadingWhitespace(event.target?.value || "");
+    const syncQuery = () => {
+      const next = trimLeadingWhitespace(input.value || "");
+      if (next === this.query) return;
+      this.query = next;
       if (this.query.length === 0 && this.mode !== "idle") {
         this.mode = "idle";
         this.loadToken = (this.loadToken || 0) + 1;
@@ -1017,7 +1019,11 @@ export const SearchScreen = {
         this.renderLoading();
         this.reloadRows();
       }
-    });
+    };
+
+    input.addEventListener("input", syncQuery);
+    input.addEventListener("change", syncQuery);
+    input.addEventListener("compositionend", syncQuery);
 
     input.addEventListener("keydown", async (event) => {
       if (event.keyCode !== 13) return;
@@ -1030,6 +1036,17 @@ export const SearchScreen = {
       this.renderLoading();
       await this.reloadRows();
     });
+
+    if (Platform.isTizen()) {
+      input.addEventListener("focus", () => {
+        if (this._tizenPollTimer) return;
+        this._tizenPollTimer = setInterval(syncQuery, 300);
+      });
+      input.addEventListener("blur", () => {
+        clearInterval(this._tizenPollTimer);
+        this._tizenPollTimer = null;
+      });
+    }
   },
 
   bindActionEvents() {
@@ -1266,6 +1283,10 @@ export const SearchScreen = {
 
   cleanup() {
     this.cancelScheduledRender();
+    if (this._tizenPollTimer) {
+      clearInterval(this._tizenPollTimer);
+      this._tizenPollTimer = null;
+    }
     if (this.searchToastTimer) {
       clearTimeout(this.searchToastTimer);
       this.searchToastTimer = null;
