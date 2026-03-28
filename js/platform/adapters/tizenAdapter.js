@@ -14,37 +14,46 @@ export const tizenAdapter = {
 
   init() {
     const tvInputDevice = globalThis.tizen?.tvinputdevice || null;
-    if (!tvInputDevice) {
-      return;
-    }
+    if (tvInputDevice) {
+      const mediaKeys = [
+        "MediaPlayPause",
+        "MediaPlay",
+        "MediaPause",
+        "MediaStop",
+        "MediaFastForward",
+        "MediaRewind",
+        "MediaTrackPrevious",
+        "MediaTrackNext"
+      ];
 
-    const mediaKeys = [
-      "MediaPlayPause",
-      "MediaPlay",
-      "MediaPause",
-      "MediaStop",
-      "MediaFastForward",
-      "MediaRewind",
-      "MediaTrackPrevious",
-      "MediaTrackNext"
-    ];
-
-    if (typeof tvInputDevice.registerKeyBatch === "function") {
-      try {
-        tvInputDevice.registerKeyBatch(mediaKeys);
-        return;
-      } catch (_) {
-        // Fall through to per-key registration.
+      if (typeof tvInputDevice.registerKeyBatch === "function") {
+        try {
+          tvInputDevice.registerKeyBatch(mediaKeys);
+        } catch (_) {
+          mediaKeys.forEach((keyName) => {
+            try {
+              tvInputDevice.registerKey?.(keyName);
+            } catch (_) {
+              // Ignore missing media-key support on older firmware.
+            }
+          });
+        }
+      } else {
+        mediaKeys.forEach((keyName) => {
+          try {
+            tvInputDevice.registerKey?.(keyName);
+          } catch (_) {
+            // Ignore missing media-key support on older firmware.
+          }
+        });
       }
     }
 
-    mediaKeys.forEach((keyName) => {
-      try {
-        tvInputDevice.registerKey?.(keyName);
-      } catch (_) {
-        // Ignore missing media-key support on older firmware.
-      }
-    });
+    const screenWidth = globalThis.screen?.width || globalThis.innerWidth || 0;
+    if (screenWidth > 1920) {
+      const scale = screenWidth / 1920;
+      document.documentElement.style.setProperty("zoom", `${scale * 100}%`);
+    }
   },
 
   exitApp() {

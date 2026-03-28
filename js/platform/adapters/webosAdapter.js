@@ -13,7 +13,13 @@ function getAvplayApi() {
 export const webosAdapter = {
   name: "webos",
 
-  init() {},
+  init() {
+    const screenWidth = globalThis.screen?.width || globalThis.innerWidth || 0;
+    if (screenWidth > 1920) {
+      const scale = screenWidth / 1920;
+      document.documentElement.style.setProperty("zoom", `${scale * 100}%`);
+    }
+  },
 
   exitApp() {
     if (globalThis.webOSSystem && typeof globalThis.webOSSystem.close === "function") {
