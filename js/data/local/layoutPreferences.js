@@ -21,7 +21,8 @@ const DEFAULTS = {
   collapseSidebar: false,
   modernSidebar: false,
   modernSidebarBlur: false,
-  hideUnreleasedContent: false
+  hideUnreleasedContent: false,
+  uiScale: 100
 };
 
 function normalizeLayoutPreferences(value = {}) {
@@ -46,7 +47,8 @@ function normalizeLayoutPreferences(value = {}) {
     detailPageTrailerButtonEnabled: Boolean(merged.detailPageTrailerButtonEnabled),
     collapseSidebar: modernSidebar ? false : Boolean(merged.collapseSidebar),
     modernSidebar,
-    modernSidebarBlur: modernSidebar ? Boolean(merged.modernSidebarBlur) : Boolean(merged.modernSidebarBlur)
+    modernSidebarBlur: modernSidebar ? Boolean(merged.modernSidebarBlur) : Boolean(merged.modernSidebarBlur),
+    uiScale: Math.min(150, Math.max(75, Math.round(Number(merged.uiScale ?? 100) || 100)))
   };
 }
 

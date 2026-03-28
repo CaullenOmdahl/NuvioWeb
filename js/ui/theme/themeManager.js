@@ -1,4 +1,5 @@
 import { ThemeStore } from "../../data/local/themeStore.js";
+import { LayoutPreferences } from "../../data/local/layoutPreferences.js";
 import { ThemeColors } from "./themeColors.js";
 
 const FONT_STACKS = {
@@ -48,6 +49,13 @@ export const ThemeManager = {
       FONT_STACKS[String(theme.fontFamily || "INTER").toUpperCase()] || FONT_STACKS.INTER
     );
     document.documentElement.style.setProperty("color-scheme", "dark");
+
+    const uiScale = Number(LayoutPreferences.get().uiScale || 100);
+    if (uiScale !== 100) {
+      document.documentElement.style.setProperty("zoom", `${uiScale}%`);
+    } else {
+      document.documentElement.style.removeProperty("zoom");
+    }
   }
 
 };

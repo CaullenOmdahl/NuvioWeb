@@ -57,6 +57,22 @@ const FONT_OPTIONS = [
   { id: "OPEN_SANS", label: "Open Sans" }
 ];
 
+const UI_SCALE_OPTIONS = [
+  { id: 75, label: "75%" },
+  { id: 80, label: "80%" },
+  { id: 85, label: "85%" },
+  { id: 90, label: "90%" },
+  { id: 95, label: "95%" },
+  { id: 100, label: "100%" },
+  { id: 105, label: "105%" },
+  { id: 110, label: "110%" },
+  { id: 115, label: "115%" },
+  { id: 120, label: "120%" },
+  { id: 125, label: "125%" },
+  { id: 130, label: "130%" },
+  { id: 150, label: "150%" }
+];
+
 const LANGUAGE_OPTIONS = [
   { id: null, labelKey: "common.systemDefault" },
   { id: "en", labelKey: "common.english" },
@@ -1119,6 +1135,19 @@ export const SettingsScreen = {
       });
     });
 
+    this.actionMap.set("appearance:uiScale", () => {
+      this.openOptionDialog({
+        title: "UI Scale",
+        options: UI_SCALE_OPTIONS,
+        selectedId: model.layout.uiScale,
+        returnFocusKey: "appearance:uiScale",
+        onSelect: (option) => {
+          LayoutPreferences.set({ uiScale: option.id });
+          ThemeManager.apply();
+        }
+      });
+    });
+
     return `
       ${this.renderSectionHeader(SECTION_META.find((item) => item.id === "appearance"))}
       <div class="settings-group-card settings-theme-grid-card">
@@ -1147,6 +1176,16 @@ export const SettingsScreen = {
       title: t("settings.appearance.appLanguage"),
       subtitle: t("settings.appearance.appLanguageSubtitle"),
       value: labelForLanguage(model.theme.language)
+    })}
+        </div>
+      </div>
+      <div class="settings-group-card">
+        <div class="settings-stack">
+          ${this.renderActionRow({
+      focusKey: "appearance:uiScale",
+      title: "UI Scale",
+      subtitle: "Adjust the overall interface size",
+      value: `${model.layout.uiScale}%`
     })}
         </div>
       </div>
