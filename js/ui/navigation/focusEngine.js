@@ -59,9 +59,14 @@ export const FocusEngine = {
 
     const normalizedEvent = buildNormalizedEvent(event);
 
-    if (Platform.isBackEvent({
+    const eventKey = String(event?.key || "");
+    const isMediaKey = eventKey.startsWith("Media")
+      || eventKey === "Play" || eventKey === "Pause"
+      || [179, 10252, 415, 19, 413, 178, 417, 412, 176, 177].includes(Number(event?.keyCode || 0));
+
+    if (!isMediaKey && Platform.isBackEvent({
       target: event?.target || null,
-      key: event?.key || "",
+      key: eventKey,
       code: event?.code || "",
       keyCode: normalizedEvent.keyCode
     })) {
