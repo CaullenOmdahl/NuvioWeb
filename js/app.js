@@ -12,6 +12,7 @@ import { warmStreamingLibs } from "./runtime/loadStreamingLibs.js";
 import { Platform } from "./platform/index.js";
 import { LocalStore } from "./core/storage/localStore.js";
 import { I18n } from "./i18n/index.js";
+import { addonRepository } from "./data/repository/addonRepository.js";
 
 const GUEST_QR_BYPASS_KEY = "skipAuthQrGate";
 
@@ -60,6 +61,32 @@ function isAddonRemoteMode() {
   }
 }
 
+async function handleAddonDeepLink() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const addonUrl = params.get("addon") || "";
+    if (!addonUrl) {
+      return;
+    }
+    const added = await addonRepository.addAddon(addonUrl);
+    if (added) {
+      console.log("Addon installed via deep link:", addonUrl);
+    } else if (added === false) {
+      console.log("Addon already installed:", addonUrl);
+    }
+    // Clean the URL so reloads don't re-trigger
+    try {
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("addon");
+      window.history.replaceState(null, "", cleanUrl.toString());
+    } catch {
+      // Ignore URL cleanup failures (e.g. file:// protocol).
+    }
+  } catch (error) {
+    console.error("Addon deep link failed:", error);
+  }
+}
+
 async function bootstrapApp() {
   renderAppShell();
   Platform.init();
@@ -72,6 +99,7 @@ async function bootstrapApp() {
   ThemeManager.apply();
   I18n.apply();
   warmStreamingLibs({ delayMs: 1400 });
+  handleAddonDeepLink();
 
   AuthManager.subscribe((state) => {
     if (state === AuthState.LOADING) {
