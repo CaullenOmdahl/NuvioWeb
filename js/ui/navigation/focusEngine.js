@@ -1,5 +1,6 @@
 import { Router } from "./router.js";
 import { Platform } from "../../platform/index.js";
+import { MouseEngine } from "./mouseEngine.js";
 
 function buildNormalizedEvent(event) {
   const normalizedKey = Platform.normalizeKey(event);
@@ -43,11 +44,17 @@ export const FocusEngine = {
     this.boundHandleKeyUp = this.handleKeyUp.bind(this);
     document.addEventListener("keydown", this.boundHandleKey, true);
     document.addEventListener("keyup", this.boundHandleKeyUp, true);
+    MouseEngine.init();
   },
 
   handleKey(event) {
     if (event.defaultPrevented) {
       return;
+    }
+
+    if (MouseEngine.active) {
+      MouseEngine.active = false;
+      document.documentElement.classList.remove("mouse-active");
     }
 
     const normalizedEvent = buildNormalizedEvent(event);

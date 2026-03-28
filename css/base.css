@@ -46,6 +46,16 @@ body {
     color: var(--text-color);
     font-family: var(--app-font-family);
     overflow: hidden;
+    cursor: none;
+}
+
+html.mouse-active,
+html.mouse-active body {
+    cursor: default;
+}
+
+html.mouse-active .focusable {
+    cursor: pointer;
 }
 
 #app {
