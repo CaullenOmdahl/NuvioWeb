@@ -933,7 +933,7 @@ export const PlayerScreen = {
     this.sourceLoadToken = 0;
     this.streamCandidatesByVideoId = new Map();
 
-    this.aspectModeIndex = 0;
+    this.aspectModeIndex = Number(PlayerSettingsStore.get().displayMode || 0) % this.aspectModes.length;
     this.aspectToastTimer = null;
     this.speedDialogVisible = false;
     this.speedDialogIndex = Math.max(0, PLAYER_SPEEDS.indexOf(1));
@@ -6367,6 +6367,7 @@ export const PlayerScreen = {
 
   cycleAspectMode() {
     this.aspectModeIndex = (this.aspectModeIndex + 1) % this.aspectModes.length;
+    PlayerSettingsStore.set({ displayMode: this.aspectModeIndex });
     this.applyAspectMode({ showToast: true });
   },
   renderParentalGuideOverlay() {
