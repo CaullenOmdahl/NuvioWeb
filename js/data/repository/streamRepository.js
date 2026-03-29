@@ -92,11 +92,26 @@ class StreamRepository {
       return [];
     }
 
+    const onChunk = typeof options?.onPluginChunk === "function" ? options.onPluginChunk : null;
+
     const pluginResults = await PluginManager.executeScrapersStreaming({
       tmdbId,
       mediaType,
       season: options?.season ?? null,
-      episode: options?.episode ?? null
+      episode: options?.episode ?? null,
+      onChunk: onChunk ? (group) => {
+        try {
+          onChunk({
+            addonName: group.sourceName,
+            addonLogo: null,
+            streams: (group.streams || []).map((stream) => ({
+              ...stream,
+              addonName: group.sourceName,
+              addonLogo: null
+            }))
+          });
+        } catch (_) {}
+      } : null
     });
 
     return pluginResults.map((result) => ({
