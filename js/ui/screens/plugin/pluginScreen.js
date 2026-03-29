@@ -6,6 +6,7 @@ import { Platform } from "../../../platform/index.js";
 import { QrCodeGenerator } from "../../../core/qr/qrCodeGenerator.js";
 import { ADDON_REMOTE_BASE_URL, PUBLIC_APP_URL } from "../../../config.js";
 import { I18n } from "../../../i18n/index.js";
+import { PluginManager } from "../../../core/player/pluginManager.js";
 import {
   activateLegacySidebarAction,
   bindRootSidebarEvents,
@@ -169,6 +170,7 @@ export const PluginScreen = {
     this.contentRow = Number.isFinite(this.contentRow) ? this.contentRow : 0;
     this.contentCol = Number.isFinite(this.contentCol) ? this.contentCol : 0;
     this.qrOverlayOpen = false;
+    this.expandedRepoId = this.expandedRepoId || null;
     const [sidebarProfile, model] = await Promise.all([
       getSidebarProfileState(),
       this.collectModel()
@@ -180,9 +182,13 @@ export const PluginScreen = {
 
   async collectModel() {
     const addonUrls = addonRepository.getInstalledAddonUrls();
+    const repositories = PluginManager.listRepositories();
+    const scrapers = PluginManager.listScrapers();
     return {
       addonCount: addonUrls.length,
-      phoneManagerUrl: await getPhoneManagerUrl(addonUrls.length)
+      phoneManagerUrl: await getPhoneManagerUrl(addonUrls.length),
+      repositories,
+      scrapers
     };
   },
 
@@ -272,6 +278,134 @@ export const PluginScreen = {
     });
   },
 
+  buildRepositoryRows() {
+    const repos = this.model.repositories || [];
+    const scrapers = this.model.scrapers || [];
+    let html = "";
+    let currentRow = 2; // rows 0 and 1 are taken by hero card and add-repo button
+
+    for (const repo of repos) {
+      const repoScrapers = scrapers.filter((s) => s.repositoryId === repo.id);
+      const scraperCount = repoScrapers.length;
+      const repoRow = currentRow;
+
+      this.setRowColumns(repoRow, [0, 1, 2]);
+
+      this.actionMap.set(`repo_refresh_${repo.id}`, async () => {
+        try {
+          await PluginManager.refreshRepository(repo.id);
+        } catch (err) {
+          console.warn("Failed to refresh repository:", err);
+        }
+        await this.render();
+      });
+
+      this.actionMap.set(`repo_scrapers_${repo.id}`, async () => {
+        this.expandedRepoId = this.expandedRepoId === repo.id ? null : repo.id;
+        await this.render({ refreshModel: false });
+      });
+
+      this.actionMap.set(`repo_remove_${repo.id}`, async () => {
+        try {
+          PluginManager.removeRepository(repo.id);
+        } catch (err) {
+          console.warn("Failed to remove repository:", err);
+        }
+        if (this.expandedRepoId === repo.id) {
+          this.expandedRepoId = null;
+        }
+        await this.render();
+      });
+
+      const isExpanded = this.expandedRepoId === repo.id;
+
+      html += `
+        <div class="addons-large-row" style="display: flex; align-items: center; gap: 8px;">
+          <span class="addons-large-row-icon material-icons" aria-hidden="true">extension</span>
+          <span class="addons-large-row-copy" style="flex: 1; min-width: 0;">
+            <strong>${escapeHtml(repo.name || repo.url)}</strong>
+            <small>${escapeHtml(scraperCount + " scraper" + (scraperCount === 1 ? "" : "s"))}</small>
+          </span>
+          <button type="button"
+                  class="addons-large-row addons-focusable"
+                  data-zone="content"
+                  data-row="${repoRow}"
+                  data-col="0"
+                  data-action-id="repo_refresh_${escapeHtml(repo.id)}"
+                  tabindex="-1"
+                  style="flex: 0 0 auto; min-width: auto;">
+            <span class="addons-large-row-icon material-icons" aria-hidden="true">refresh</span>
+            <span class="addons-large-row-copy"><strong>Refresh</strong></span>
+          </button>
+          <button type="button"
+                  class="addons-large-row addons-focusable"
+                  data-zone="content"
+                  data-row="${repoRow}"
+                  data-col="1"
+                  data-action-id="repo_scrapers_${escapeHtml(repo.id)}"
+                  tabindex="-1"
+                  style="flex: 0 0 auto; min-width: auto;">
+            <span class="addons-large-row-icon material-icons" aria-hidden="true">${isExpanded ? "expand_less" : "expand_more"}</span>
+            <span class="addons-large-row-copy"><strong>Scrapers</strong></span>
+          </button>
+          <button type="button"
+                  class="addons-large-row addons-focusable"
+                  data-zone="content"
+                  data-row="${repoRow}"
+                  data-col="2"
+                  data-action-id="repo_remove_${escapeHtml(repo.id)}"
+                  tabindex="-1"
+                  style="flex: 0 0 auto; min-width: auto;">
+            <span class="addons-large-row-icon material-icons" aria-hidden="true">delete</span>
+            <span class="addons-large-row-copy"><strong>Remove</strong></span>
+          </button>
+        </div>
+      `;
+
+      currentRow++;
+
+      if (isExpanded) {
+        for (const scraper of repoScrapers) {
+          const scraperRow = currentRow;
+          this.setRowColumns(scraperRow, [0]);
+
+          this.actionMap.set(`scraper_toggle_${scraper.id}`, async () => {
+            try {
+              PluginManager.setScraperEnabled(scraper.id, !scraper.enabled);
+            } catch (err) {
+              console.warn("Failed to toggle scraper:", err);
+            }
+            await this.render();
+          });
+
+          html += `
+            <button type="button"
+                    class="addons-large-row addons-focusable"
+                    data-zone="content"
+                    data-row="${scraperRow}"
+                    data-col="0"
+                    data-action-id="scraper_toggle_${escapeHtml(scraper.id)}"
+                    tabindex="-1"
+                    style="padding-left: 48px;">
+              <span class="addons-large-row-icon material-icons" aria-hidden="true">${scraper.enabled ? "toggle_on" : "toggle_off"}</span>
+              <span class="addons-large-row-copy">
+                <strong>${escapeHtml(scraper.name || scraper.id)}</strong>
+                <small>${escapeHtml(scraper.version || "")}</small>
+              </span>
+              <span class="addons-large-row-tail-group">
+                <span class="addons-large-row-badge">${escapeHtml(scraper.enabled ? "Enabled" : "Disabled")}</span>
+              </span>
+            </button>
+          `;
+
+          currentRow++;
+        }
+      }
+    }
+
+    return html;
+  },
+
   async render({ refreshModel = true } = {}) {
     if (refreshModel || !this.model) {
       this.model = await this.collectModel();
@@ -279,12 +413,27 @@ export const PluginScreen = {
     this.rowColumns = new Map();
     this.actionMap = new Map();
     this.setRowColumns(0, [0]);
+    this.setRowColumns(1, [0]);
     const manageFromPhonePlanned = true;
 
     this.actionMap.set("manage_from_phone", async () => {});
     this.actionMap.set("close_qr_overlay", async () => {
       await this.closeQrOverlay();
     });
+    this.actionMap.set("add_repository", async () => {
+      const url = prompt("Enter plugin repository URL:");
+      if (!url || !url.trim()) {
+        return;
+      }
+      try {
+        await PluginManager.addRepository(url.trim());
+      } catch (err) {
+        console.warn("Failed to add repository:", err);
+      }
+      await this.render();
+    });
+
+    const repoRowsHtml = this.buildRepositoryRows();
 
     this.container.innerHTML = `
       <div class="home-shell addons-shell${this.pluginRouteEnterPending ? " addons-route-enter" : ""}">
@@ -320,6 +469,24 @@ export const PluginScreen = {
                   <span class="addons-large-row-tail material-icons" aria-hidden="true">phone_android</span>
                 </span>
               </button>
+            </section>
+
+            <section class="addons-repos-section">
+              <h2 class="addons-section-title">Plugin Repositories</h2>
+              <button type="button"
+                      class="addons-large-row addons-focusable"
+                      data-zone="content"
+                      data-row="1"
+                      data-col="0"
+                      data-action-id="add_repository"
+                      tabindex="-1">
+                <span class="addons-large-row-icon material-icons" aria-hidden="true">add_circle_outline</span>
+                <span class="addons-large-row-copy">
+                  <strong>Add Repository</strong>
+                  <small>Enter a plugin repository URL</small>
+                </span>
+              </button>
+              ${repoRowsHtml}
             </section>
           </div>
         </main>
