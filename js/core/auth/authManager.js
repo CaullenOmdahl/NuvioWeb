@@ -65,7 +65,6 @@ class AuthManagerClass {
   // EMAIL LOGIN
   // ------------------------------------
   async signInWithEmail(email, password) {
-
     const res = await fetch(
       `${SUPABASE_URL}/auth/v1/token?grant_type=password`,
       {
@@ -78,7 +77,16 @@ class AuthManagerClass {
       }
     );
 
-    if (!res.ok) throw new Error("Login failed");
+    if (!res.ok) {
+      let message = "Login failed";
+      try {
+        const body = await res.json();
+        message = body.error_description || body.msg || body.error || message;
+      } catch (_) {}
+      const err = new Error(message);
+      err.status = res.status;
+      throw err;
+    }
 
     const data = await res.json();
 

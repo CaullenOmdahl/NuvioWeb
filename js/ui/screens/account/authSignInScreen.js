@@ -1,71 +1,273 @@
 import { Router } from "../../navigation/router.js";
 import { ScreenUtils } from "../../navigation/screen.js";
 import { AuthManager } from "../../../core/auth/authManager.js";
+import { LocalStore } from "../../../core/storage/localStore.js";
 import { I18n } from "../../../i18n/index.js";
+
+function t(key, fallback) {
+  return I18n.t(key, {}, { fallback: fallback || key });
+}
 
 export const AuthSignInScreen = {
 
   async mount() {
     this.container = document.getElementById("account");
+    this.isMounted = true;
+    this.isSubmitting = false;
+    this.errorMessage = "";
     ScreenUtils.show(this.container);
     this.render();
   },
 
   render() {
     this.container.innerHTML = `
-      <div class="auth-simple-shell">
-        <div class="auth-simple-hero">
-          <h2 class="auth-simple-title">${I18n.t("auth.signIn.title")}</h2>
-          <p class="auth-simple-subtitle">${I18n.t("auth.signIn.description")}</p>
-        </div>
-        <div class="auth-simple-actions">
-          <div class="auth-simple-card focusable" data-action="openQr">${I18n.t("auth.signIn.openQrLogin")}</div>
-          <div class="auth-simple-card focusable" data-action="devLogin">${I18n.t("auth.signIn.devEmailLogin")}</div>
-          <div class="auth-simple-card focusable" data-action="back">${I18n.t("auth.signIn.back")}</div>
-        </div>
+      <div class="qr-layout">
+        <section class="qr-left-panel">
+          <div class="qr-brand-lockup">
+            <img src="assets/brand/app_logo_wordmark.png" class="qr-logo" alt="Nuvio" />
+          </div>
+          <div class="qr-copy-block">
+            <h1 class="qr-title">${t("auth.email.title", "Sign In")}</h1>
+            <p class="qr-description">${t("auth.email.description", "Sign in with your email and password to sync your library across devices.")}</p>
+          </div>
+        </section>
+
+        <section class="qr-card-panel">
+          <div class="qr-card" style="min-height:auto;padding:56px 52px;">
+            <header class="qr-card-header">
+              <h2 class="qr-card-title">${t("auth.email.cardTitle", "Email Login")}</h2>
+              <p class="qr-card-subtitle">${t("auth.email.cardSubtitle", "Enter your credentials below")}</p>
+            </header>
+
+            <form id="email-login-form" autocomplete="on" style="display:flex;flex-direction:column;gap:20px;margin-top:32px;">
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <label for="email-input" style="font-size:20px;color:var(--text-secondary);">${t("auth.email.emailLabel", "Email")}</label>
+                <input
+                  id="email-input"
+                  class="focusable"
+                  type="email"
+                  autocomplete="email"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  placeholder="${t("auth.email.emailPlaceholder", "you@example.com")}"
+                  data-action="emailInput"
+                  style="width:100%;height:72px;padding:0 24px;font-size:26px;border-radius:12px;border:2px solid var(--border-color, #333);background:var(--bg-elevated, #1a1d24);color:var(--text-color, #f4f7fb);outline:none;box-sizing:border-box;"
+                />
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <label for="password-input" style="font-size:20px;color:var(--text-secondary);">${t("auth.email.passwordLabel", "Password")}</label>
+                <input
+                  id="password-input"
+                  class="focusable"
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder="${t("auth.email.passwordPlaceholder", "Enter your password")}"
+                  data-action="passwordInput"
+                  style="width:100%;height:72px;padding:0 24px;font-size:26px;border-radius:12px;border:2px solid var(--border-color, #333);background:var(--bg-elevated, #1a1d24);color:var(--text-color, #f4f7fb);outline:none;box-sizing:border-box;"
+                />
+              </div>
+              <div id="email-login-error" style="min-height:36px;font-size:22px;color:var(--error-color, #ef4444);text-align:center;">${this.errorMessage || ""}</div>
+            </form>
+
+            <div class="qr-actions" style="padding-top:24px;">
+              <button type="button" id="email-submit-btn" class="qr-action-btn qr-action-btn-primary focusable" data-action="submit"${this.isSubmitting ? " disabled" : ""}>
+                ${this.isSubmitting ? t("auth.email.signingIn", "Signing in...") : t("auth.email.signIn", "Sign In")}
+              </button>
+              <button type="button" id="email-qr-btn" class="qr-action-btn qr-action-btn-secondary focusable" data-action="qrLogin">
+                ${t("auth.email.useQrCode", "Use QR Code")}
+              </button>
+              <button type="button" id="email-back-btn" class="qr-action-btn qr-action-btn-secondary focusable" data-action="back">
+                ${t("auth.email.continueAsGuest", "Continue as Guest")}
+              </button>
+            </div>
+          </div>
+        </section>
       </div>
     `;
 
+    this.bindEvents();
     ScreenUtils.indexFocusables(this.container);
     ScreenUtils.setInitialFocus(this.container);
+
+    // Auto-focus the email input
+    const emailInput = this.container.querySelector("#email-input");
+    if (emailInput) {
+      emailInput.focus();
+      emailInput.classList.add("focused");
+    }
   },
 
-  async onKeyDown(event) {
-    if (ScreenUtils.handleDpadNavigation(event, this.container)) {
-      return;
+  bindEvents() {
+    const form = this.container.querySelector("#email-login-form");
+    if (form) {
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        this.handleSubmit();
+      });
     }
-    if (event.keyCode !== 13) {
+
+    // Focus ring styling for inputs
+    this.container.querySelectorAll("input.focusable").forEach((input) => {
+      input.addEventListener("focus", () => {
+        input.style.borderColor = "var(--focus-color, #6366f1)";
+        input.style.boxShadow = "0 0 0 2px var(--focus-color, #6366f1)";
+      });
+      input.addEventListener("blur", () => {
+        input.style.borderColor = "var(--border-color, #333)";
+        input.style.boxShadow = "none";
+      });
+    });
+
+    // Enter on password field submits
+    const passwordInput = this.container.querySelector("#password-input");
+    if (passwordInput) {
+      passwordInput.addEventListener("keydown", (e) => {
+        if (e.keyCode === 13) {
+          e.preventDefault();
+          this.handleSubmit();
+        }
+      });
+    }
+
+    // Button clicks
+    this.container.querySelector("#email-submit-btn")?.addEventListener("click", () => this.handleSubmit());
+    this.container.querySelector("#email-qr-btn")?.addEventListener("click", () => Router.navigate("authQrSignIn"));
+    this.container.querySelector("#email-back-btn")?.addEventListener("click", () => this.handleGuestContinue());
+  },
+
+  async handleSubmit() {
+    if (this.isSubmitting) return;
+
+    const emailInput = this.container?.querySelector("#email-input");
+    const passwordInput = this.container?.querySelector("#password-input");
+    const email = String(emailInput?.value || "").trim();
+    const password = String(passwordInput?.value || "");
+
+    if (!email) {
+      this.showError(t("auth.email.errorEmailRequired", "Please enter your email address"));
+      emailInput?.focus();
       return;
     }
 
-    const current = this.container.querySelector(".focusable.focused");
-    if (!current) {
+    if (!password) {
+      this.showError(t("auth.email.errorPasswordRequired", "Please enter your password"));
+      passwordInput?.focus();
       return;
     }
-    const action = current.dataset.action;
-    if (action === "openQr") {
-      Router.navigate("authQrSignIn");
-      return;
+
+    this.isSubmitting = true;
+    this.showError("");
+    this.updateSubmitButton();
+
+    try {
+      await AuthManager.signInWithEmail(email, password);
+      if (!this.isMounted) return;
+      LocalStore.remove("skipAuthQrGate");
+      LocalStore.set("hasSeenAuthQrOnFirstLaunch", true);
+      Router.navigate("profileSelection");
+    } catch (error) {
+      if (!this.isMounted) return;
+      const message = String(error?.message || "Login failed");
+      if (error?.status === 400) {
+        this.showError(t("auth.email.errorInvalidCredentials", "Invalid email or password"));
+      } else if (message.toLowerCase().includes("network") || message.toLowerCase().includes("fetch")) {
+        this.showError(t("auth.email.errorNetwork", "Network error. Check your connection."));
+      } else {
+        this.showError(message);
+      }
+    } finally {
+      if (this.isMounted) {
+        this.isSubmitting = false;
+        this.updateSubmitButton();
+      }
     }
-    if (action === "devLogin") {
-      const email = window.prompt(I18n.t("auth.signIn.emailPrompt"));
-      const password = window.prompt(I18n.t("auth.signIn.passwordPrompt"));
-      if (email && password) {
-        try {
-          await AuthManager.signInWithEmail(email, password);
-          Router.navigate("profileSelection");
-        } catch (error) {
-          console.error("SignIn failed", error);
+  },
+
+  handleGuestContinue() {
+    LocalStore.set("hasSeenAuthQrOnFirstLaunch", true);
+    LocalStore.set("skipAuthQrGate", true);
+    Router.navigate("home", {}, { replaceHistory: true, skipStackPush: true });
+  },
+
+  showError(message) {
+    this.errorMessage = message;
+    const errorEl = this.container?.querySelector("#email-login-error");
+    if (errorEl) {
+      errorEl.textContent = message;
+    }
+  },
+
+  updateSubmitButton() {
+    const btn = this.container?.querySelector("#email-submit-btn");
+    if (btn) {
+      btn.disabled = this.isSubmitting;
+      btn.textContent = this.isSubmitting
+        ? t("auth.email.signingIn", "Signing in...")
+        : t("auth.email.signIn", "Sign In");
+    }
+  },
+
+  onKeyDown(event) {
+    // Let inputs handle their own keypresses
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === "INPUT")) {
+      // Tab between email and password
+      if (event.keyCode === 40) { // Down arrow
+        event.preventDefault();
+        const emailInput = this.container?.querySelector("#email-input");
+        const passwordInput = this.container?.querySelector("#password-input");
+        if (activeEl === emailInput && passwordInput) {
+          passwordInput.focus();
+          return;
+        }
+        if (activeEl === passwordInput) {
+          // Move focus to submit button
+          const submitBtn = this.container?.querySelector("#email-submit-btn");
+          if (submitBtn) {
+            activeEl.blur();
+            ScreenUtils.indexFocusables(this.container);
+            submitBtn.classList.add("focused");
+            submitBtn.focus();
+          }
+          return;
+        }
+      }
+      if (event.keyCode === 38) { // Up arrow
+        event.preventDefault();
+        const emailInput = this.container?.querySelector("#email-input");
+        const passwordInput = this.container?.querySelector("#password-input");
+        if (activeEl === passwordInput && emailInput) {
+          emailInput.focus();
+          return;
         }
       }
       return;
     }
-    if (action === "back") {
-      Router.back();
+
+    if (ScreenUtils.handleDpadNavigation(event, this.container)) {
+      return;
+    }
+
+    if (event.keyCode === 13) {
+      const current = this.container?.querySelector(".focusable.focused");
+      if (!current) return;
+      const action = current.dataset.action;
+      if (action === "submit") {
+        this.handleSubmit();
+      } else if (action === "qrLogin") {
+        Router.navigate("authQrSignIn");
+      } else if (action === "back") {
+        this.handleGuestContinue();
+      } else if (action === "emailInput" || action === "passwordInput") {
+        current.focus();
+      }
     }
   },
 
   cleanup() {
+    this.isMounted = false;
+    this.isSubmitting = false;
+    this.errorMessage = "";
     ScreenUtils.hide(this.container);
   }
 
