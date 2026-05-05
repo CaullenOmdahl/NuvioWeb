@@ -1,86 +1,161 @@
+# Nuvio Desktop
+
 <div align="center">
-
-  <img src="https://github.com/tapframe/NuvioTV/raw/dev/assets/brand/app_logo_wordmark.png" alt="NuvioTV Web" width="300" />
+  <img src="https://github.com/tapframe/NuvioTV/raw/dev/assets/brand/app_logo_wordmark.png" alt="Nuvio TV" width="300" />
   <br />
   <br />
-
-  <p>
-    A modern <b>web version</b> of Nuvio TV powered by the Stremio addon ecosystem.
-    <br />
-    Shared web app • Hosted TV wrappers • Playback-focused experience
-  </p>
-
-  <p>
-    ⚠️ <b>Status: BETA</b> — experimental and may be unstable.
-  </p>
-
+  <strong>Standalone desktop localization of the Nuvio TV web app.</strong>
 </div>
 
-## About
+## Desktop Fork Notes
 
-**NuvioTV Web** is the shared web app source for the Nuvio TV experience. It runs in a browser and also powers lightweight TV wrappers for **Samsung Tizen** and **LG webOS**.
+This branch keeps the upstream Nuvio TV web experience, then adapts it for a standalone desktop app. The goal is to make the app feel native on a laptop or desktop monitor instead of behaving like a fixed-size TV surface that expects only directional keys.
 
-It acts as a client-side interface that can integrate with the **Stremio addon ecosystem** for content discovery and source resolution through user-installed extensions.
+The desktop changes are intentionally platform-scoped:
 
-> This repository is the shared web codebase. The Tizen and webOS repos are wrapper layers around the hosted web app.
+- Tauri desktop packaging for local macOS builds and standalone launch.
+- Production-compatible runtime config through `nuvio.env.js`, without committing secret values.
+- Direct email/password login for desktop users, while leaving QR login available for TV-style pairing.
+- Stable desktop display scaling through native Tauri webview zoom plus the existing in-app UI scale preference.
+- Desktop-only compact density rules for TV-sized route panels, stream selection cards, settings rows, and account screens.
+- Mouse-first interaction support: clicked focusables activate like Enter, player controls are clickable, and nested routes expose a desktop back button.
+- Route sizing is normalized across Home, Search, Discover, Detail, Stream Selection, Player, Cast, See All, Library, Settings, Account, and auth screens.
 
-## Install
+Why these changes exist: the upstream app is a 10-foot TV interface, so many controls were sized for remote navigation at couch distance. On desktop, that made selection components feel 2-3x too large, caused DPI-dependent flicker, and left some routes without an intuitive mouse path back. The desktop fork fixes those issues while preserving the original artwork, metadata, and playback model.
 
-### TizenBrew
+## Upstream Credit
 
-- Open TizenBrew on your Samsung TV
-- Add the GitHub module `NuvioMedia/NuvioTVTizen`
-- Launch Nuvio TV from your installed modules
+This work depends on and credits the upstream Nuvio ecosystem:
 
-### webOS Homebrew
+- [tapframe/NuvioTV](https://github.com/tapframe/NuvioTV) - original Android TV project and product direction.
+- [WhiteGiso/NuvioTV-WebOS](https://github.com/WhiteGiso/NuvioTV-WebOS) - community webOS codebase that helped shape the shared web version.
+- [NuvioMedia/NuvioTVTizen](https://github.com/NuvioMedia/NuvioTVTizen) - Tizen wrapper.
+- [NuvioMedia/NuvioWebOS](https://github.com/NuvioMedia/NuvioWebOS) - webOS wrapper.
 
-- For direct `.ipk` install: open the latest release in `NuvioMedia/NuvioWeb`, download the attached `.ipk`, enable Developer Mode and Key Server by following `https://www.webosbrew.org/devmode`, then install it with `webOS Dev Manager`
-- For Homebrew Channel repository install: open `Homebrew Channel`, go to `Settings`, choose `Add repository`, enter `https://raw.githubusercontent.com/NuvioMedia/NuvioWebOS/main/webosbrew/apps.json`, return to the apps list, and install Nuvio TV from there
+This repository is a downstream desktop-focused fork of the shared web app. Changes should stay compatible with upstream behavior unless the difference is necessary for standalone desktop use.
 
-### Wrapper Repositories
+## What This App Does
 
-- TizenBrew wrapper: `NuvioMedia/NuvioTVTizen`
-- webOS wrapper: `NuvioMedia/NuvioWebOS`
+Nuvio TV is a client-side media interface built around metadata browsing, Stremio-compatible addon discovery, source resolution, and playback. The app does not host media. Users are responsible for using sources and addons they are authorized to access.
 
-## Origins / Credits
+The same web source can run in:
 
-This project is part of the Nuvio TV ecosystem and has two important roots:
+- A browser or hosted web environment.
+- TV wrappers for Tizen and webOS.
+- The Tauri desktop shell in this fork.
 
-- **tapframe/NuvioTV**  
-  The original Android TV project that inspired the TV-first product direction.  
-  https://github.com/tapframe/NuvioTV
+## Repository Structure
 
-- **WhiteGiso/NuvioTV-WebOS**  
-  The community webOS codebase that served as the starting inspiration/base for this shared web version.  
-  https://github.com/WhiteGiso/NuvioTV-WebOS
+- `js/` - app logic, platform adapters, auth, routing, playback, and screens.
+- `css/` - shared styling and desktop-specific density overrides.
+- `assets/` - icons, branding, images, and bundled browser libraries.
+- `scripts/` - build, serving, release, and wrapper sync tooling.
+- `src-tauri/` - desktop app shell and native display zoom integration.
+- `tests/` - focused Node test coverage for auth, display scaling, and mouse navigation.
+- `dist/` - generated build output.
 
-This repository expands on that foundation into a shared web app that can be reused across platforms.
+## Requirements
 
-## For Developers
+- Node.js with npm.
+- Rust toolchain for Tauri desktop builds.
+- Tauri prerequisites for your OS.
+- Optional platform SDKs for Tizen or webOS wrapper packaging.
 
-### Repository Structure
+## Runtime Configuration
 
-- `js/` app logic, platform adapters, player code
-- `css/` shared styling
-- `assets/` icons, branding, bundled libs
-- `scripts/` build and sync tooling for self-packaged wrappers
-- `dist/` generated build output
+The app reads runtime configuration from `nuvio.env.js` before loading `app.bundle.js`.
 
-### Run the Web App Locally
+For local development:
+
+```bash
+cp nuvio.env.example.js nuvio.env.js
+```
+
+Then fill in the public runtime values your deployment requires, such as:
+
+```js
+window.__NUVIO_ENV__ = {
+  SUPABASE_URL: "",
+  SUPABASE_ANON_KEY: ""
+};
+```
+
+Do not commit production secrets or private credentials. The Supabase anon key is still a public client key, but this fork keeps local and production environment values outside committed source.
+
+## Web Development
+
+Install dependencies:
 
 ```bash
 npm install
-npm run build
-python3 -m http.server 8080 -d dist
 ```
 
-Open `http://127.0.0.1:8080`.
+Build the web bundle:
 
-### Building Wrapper Projects Yourself
+```bash
+npm run build
+```
 
-The public TizenBrew wrapper and the webOS release wrapper point at the hosted web app. This repo also includes sync tooling for developers who want to build fully packaged custom wrappers.
+Serve the built app:
 
-#### webOS self-packaged wrapper
+```bash
+npm run serve
+```
+
+By default the local server uses `http://127.0.0.1:4173`.
+
+## Desktop Development
+
+Run the Tauri app in development:
+
+```bash
+npm run tauri:dev
+```
+
+Build a local macOS app bundle without updater artifacts:
+
+```bash
+npm run tauri:build:local
+```
+
+The app bundle is written to:
+
+```text
+src-tauri/target/release/bundle/macos/Nuvio TV.app
+```
+
+Launch the built app on macOS:
+
+```bash
+open -na "src-tauri/target/release/bundle/macos/Nuvio TV.app"
+```
+
+## Desktop QA Checklist
+
+Before shipping desktop changes, run:
+
+```bash
+node --test tests/displayScale.test.mjs tests/authManager.test.mjs tests/mouseNavigation.test.mjs
+cd src-tauri && cargo test
+git diff --check
+npm run tauri:build:local
+```
+
+Also launch the built app and verify:
+
+- No big-small frame flicker on startup or route changes.
+- Selection cards and settings rows stay desktop-sized.
+- Original artwork remains visible and proportionate.
+- Mouse click opens media, stream cards, settings actions, account actions, and player controls.
+- Desktop back controls return from Detail, Stream Selection, Player, Cast, and See All routes.
+- Email/password login works when `nuvio.env.js` is configured.
+- QR login still remains available for paired-device flows.
+
+## TV Wrapper Builds
+
+The public Tizen and webOS wrappers can point at a hosted build. This repo also includes sync tooling for developers who want fully packaged custom wrappers.
+
+### webOS
 
 Create a separate webOS project folder with at least:
 
@@ -91,14 +166,12 @@ YourWebOSProject/
   main.js
 ```
 
-Then sync the built app into that wrapper:
+Sync the built app into that wrapper:
 
 ```bash
 npm run build
 npm run sync:webos -- /absolute/path/to/YourWebOSProject
 ```
-
-Package/install it with your normal webOS CLI workflow.
 
 For a local IPK directly from this repo:
 
@@ -109,7 +182,7 @@ npm run inspect:webos -- -d lg
 npm run logs:webos -- -d lg
 ```
 
-#### Tizen self-packaged wrapper
+### Tizen
 
 Create a separate Tizen project folder with at least:
 
@@ -120,44 +193,21 @@ YourTizenProject/
   main.js
 ```
 
-Then sync the built app into that wrapper:
+Sync the built app into that wrapper:
 
 ```bash
 npm run build
 npm run sync:tizen -- /absolute/path/to/YourTizenProject
 ```
 
-Package/install it with Tizen Studio or your normal Samsung TV workflow.
+Package and install with Tizen Studio or your normal Samsung TV workflow.
 
-### Sync Commands
+## Legal
 
-```bash
-npm run sync:webos -- /absolute/path/to/project
-npm run sync:tizen -- /absolute/path/to/project
-```
+Nuvio TV functions solely as a client-side interface for browsing metadata and playing media provided by user-installed extensions or user-provided sources.
 
-Compatibility form:
-
-```bash
-npm run sync -- --webos --path /absolute/path/to/project
-npm run sync -- --tizen --path /absolute/path/to/project
-```
-
-### Hosted vs Packaged
-
-- The shared app can be hosted as a normal website
-- The maintained Tizen and webOS wrapper repos are hosted-app launchers
-- The sync commands are for developers who want fully packaged custom wrappers
-
-## Legal & Disclaimer
-
-This project functions solely as a client-side interface for browsing metadata and playing media provided by user-installed extensions and/or user-provided sources.
-
-It is intended for content the user owns or is otherwise authorized to access.
-
-This project is not affiliated with third-party extensions or content providers and does not host, store, or distribute any media content.
+This project is intended for content the user owns or is otherwise authorized to access. It is not affiliated with third-party extensions or content providers and does not host, store, or distribute media content.
 
 ## License
 
-- Upstream Android TV project: see **tapframe/NuvioTV**
-- Shared web / wrapper ecosystem: choose and document the final license for this repository
+Respect the licenses and notices of the upstream projects credited above. Document any additional license terms for this desktop fork before public distribution.
