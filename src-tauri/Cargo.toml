@@ -1,6 +1,6 @@
 [package]
 name = "nuvio-tv-desktop"
-version = "0.1.3"
+version = "0.1.5"
 description = "Nuvio TV Desktop"
 authors = ["NuvioMedia"]
 edition = "2021"

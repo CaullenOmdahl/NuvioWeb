@@ -67,14 +67,6 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (!fileStat?.isFile()) {
-      if (path.basename(filePath) === "nuvio.env.js") {
-        response.writeHead(200, {
-          "Cache-Control": "no-store",
-          "Content-Type": "application/javascript; charset=utf-8"
-        });
-        response.end("// Auto-generated empty env for dev\n");
-        return;
-      }
       response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       response.end("Not found");
       return;

@@ -2,6 +2,17 @@ import { AuthState } from "./authState.js";
 import { SessionStore } from "../storage/sessionStore.js";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../config.js";
 
+function assertAuthConfigured() {
+  if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+    return;
+  }
+  const error = new Error(
+    "Nuvio auth is not configured on this desktop build. Add SUPABASE_URL and SUPABASE_ANON_KEY to nuvio.env.js, then rebuild."
+  );
+  error.code = "AUTH_CONFIG_MISSING";
+  throw error;
+}
+
 class AuthManagerClass {
 
   constructor() {
@@ -65,6 +76,8 @@ class AuthManagerClass {
   // EMAIL LOGIN
   // ------------------------------------
   async signInWithEmail(email, password) {
+    assertAuthConfigured();
+
     const res = await fetch(
       `${SUPABASE_URL}/auth/v1/token?grant_type=password`,
       {
@@ -113,6 +126,8 @@ class AuthManagerClass {
     if (!refreshToken) {
       return Boolean(SessionStore.accessToken);
     }
+
+    assertAuthConfigured();
 
     this.refreshPromise = (async () => {
       try {

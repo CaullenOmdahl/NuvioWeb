@@ -57,13 +57,17 @@ function detectPlatformName() {
   if (override && ADAPTERS[override]) {
     return override;
   }
+  const userAgent = String(globalThis.navigator?.userAgent || "").toLowerCase();
   if (globalThis.__TAURI_INTERNALS__) {
     return "desktop";
   }
   if (globalThis.webOS || globalThis.PalmSystem || globalThis.webOSSystem) {
     return "webos";
   }
-  if (globalThis.tizen || String(globalThis.navigator?.userAgent || "").toLowerCase().includes("tizen")) {
+  if (userAgent.includes("webos") || userAgent.includes("web0s")) {
+    return "webos";
+  }
+  if (globalThis.tizen || userAgent.includes("tizen")) {
     return "tizen";
   }
   return "browser";
@@ -113,6 +117,15 @@ export const Platform = {
   },
 
   exitApp() {
+    if (globalThis.document && typeof globalThis.CustomEvent === "function") {
+      const beforeExitEvent = new CustomEvent("nuvio:beforeExitApp", {
+        cancelable: true
+      });
+      globalThis.document.dispatchEvent(beforeExitEvent);
+      if (beforeExitEvent.defaultPrevented) {
+        return false;
+      }
+    }
     return getAdapter().exitApp();
   },
 

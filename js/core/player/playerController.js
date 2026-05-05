@@ -9,6 +9,8 @@ import { resolvePlatformAvplayEngine } from "./engines/platformAvplayEngine.js";
 import { WebOsLunaService } from "../../platform/webos/webosLunaService.js";
 import { loadStreamingLibs } from "../../runtime/loadStreamingLibs.js";
 
+const MIN_PROGRESS_SYNC_DURATION_MS = 60000;
+
 export const PlayerController = {
 
   video: null,
@@ -32,11 +34,13 @@ export const PlayerController = {
   avplaySubtitleTracks: [],
   selectedAvPlayAudioTrackIndex: -1,
   selectedAvPlaySubtitleTrackIndex: -1,
+  pendingAvPlayAudioTrackIndex: -1,
   avplayTickTimer: null,
   avplayReady: false,
   avplayEnded: false,
   avplayCurrentTimeMs: 0,
   avplayDurationMs: 0,
+  avplayTrackSyncAt: 0,
   lastPlaybackErrorCode: 0,
   currentPlaybackUrl: "",
   currentPlaybackHeaders: {},
@@ -46,6 +50,8 @@ export const PlayerController = {
   playRequestToken: 0,
   nativeMediaId: "",
   nativeMediaIdLookupToken: 0,
+  selectedWebOsEmbeddedAudioTrackIndex: -1,
+  selectedWebOsEmbeddedSubtitleTrackIndex: -1,
   webosDeviceInfoPromise: null,
   webosUnsupportedAudioCodecs: new Set(["dts", "truehd"]),
   viewportSyncHandler: null,
@@ -177,6 +183,21 @@ export const PlayerController = {
     return this.getPlatformAvplayEngine().getApi();
   },
 
+  getAvPlayState() {
+    if (!this.isUsingAvPlay()) {
+      return "";
+    }
+    const avplay = this.getAvPlay();
+    if (!avplay) {
+      return "";
+    }
+    try {
+      return String(avplay.getState?.() || "").trim().toUpperCase();
+    } catch (_) {
+      return "";
+    }
+  },
+
   canUseAvPlay() {
     return this.getPlatformAvplayEngine().isSupported();
   },
@@ -296,6 +317,8 @@ export const PlayerController = {
   resetNativeMediaState() {
     this.nativeMediaId = "";
     this.nativeMediaIdLookupToken = Number(this.nativeMediaIdLookupToken || 0) + 1;
+    this.selectedWebOsEmbeddedAudioTrackIndex = -1;
+    this.selectedWebOsEmbeddedSubtitleTrackIndex = -1;
   },
 
   syncNativeMediaId() {
@@ -451,12 +474,13 @@ export const PlayerController = {
     return "";
   },
 
-  syncAvPlayTrackInfo() {
+  syncAvPlayTrackInfo(options = {}) {
     if (!this.isUsingAvPlay()) {
       this.avplayAudioTracks = [];
       this.avplaySubtitleTracks = [];
       this.selectedAvPlayAudioTrackIndex = -1;
       this.selectedAvPlaySubtitleTrackIndex = -1;
+      this.avplayTrackSyncAt = 0;
       return;
     }
 
@@ -464,6 +488,13 @@ export const PlayerController = {
     if (!avplay) {
       return;
     }
+
+    const force = Boolean(options?.force);
+    const now = Date.now();
+    if (!force && (now - Number(this.avplayTrackSyncAt || 0)) < 220) {
+      return;
+    }
+    this.avplayTrackSyncAt = now;
 
     const totalTracks = (() => {
       try {
@@ -542,6 +573,9 @@ export const PlayerController = {
 
     if (Number.isFinite(selectedAudioIndex)) {
       this.selectedAvPlayAudioTrackIndex = selectedAudioIndex;
+      this.pendingAvPlayAudioTrackIndex = -1;
+    } else if (Number.isFinite(this.pendingAvPlayAudioTrackIndex) && this.pendingAvPlayAudioTrackIndex >= 0) {
+      this.selectedAvPlayAudioTrackIndex = this.pendingAvPlayAudioTrackIndex;
     } else if (this.avplayAudioTracks.length && this.selectedAvPlayAudioTrackIndex < 0) {
       this.selectedAvPlayAudioTrackIndex = this.avplayAudioTracks[0].avplayTrackIndex;
     } else if (!this.avplayAudioTracks.length) {
@@ -571,6 +605,18 @@ export const PlayerController = {
     return Number.isFinite(this.selectedAvPlaySubtitleTrackIndex) ? this.selectedAvPlaySubtitleTrackIndex : -1;
   },
 
+  getSelectedWebOsEmbeddedAudioTrackIndex() {
+    return Number.isFinite(this.selectedWebOsEmbeddedAudioTrackIndex)
+      ? this.selectedWebOsEmbeddedAudioTrackIndex
+      : -1;
+  },
+
+  getSelectedWebOsEmbeddedSubtitleTrackIndex() {
+    return Number.isFinite(this.selectedWebOsEmbeddedSubtitleTrackIndex)
+      ? this.selectedWebOsEmbeddedSubtitleTrackIndex
+      : -1;
+  },
+
   setAvPlayAudioTrack(trackIndex) {
     if (!this.isUsingAvPlay()) {
       return false;
@@ -590,18 +636,50 @@ export const PlayerController = {
       return false;
     }
 
+    const avplayState = this.getAvPlayState();
+    if (avplayState === "PAUSED") {
+      this.pendingAvPlayAudioTrackIndex = targetIndex;
+      this.selectedAvPlayAudioTrackIndex = targetIndex;
+      this.emitVideoEvent("avplaytrackschanged", { playbackEngine: this.playbackEngine });
+      return true;
+    }
+
     try {
       avplay.setSelectTrack("AUDIO", targetIndex);
+      this.pendingAvPlayAudioTrackIndex = -1;
       this.selectedAvPlayAudioTrackIndex = targetIndex;
-      this.syncAvPlayTrackInfo();
+      this.syncAvPlayTrackInfo({ force: true });
       this.emitVideoEvent("avplaytrackschanged", { playbackEngine: this.playbackEngine });
       setTimeout(() => {
         if (!this.isUsingAvPlay()) {
           return;
         }
-        this.syncAvPlayTrackInfo();
+        this.syncAvPlayTrackInfo({ force: true });
         this.emitVideoEvent("avplaytrackschanged", { playbackEngine: this.playbackEngine });
       }, 400);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  applyPendingAvPlayAudioTrackSelection() {
+    const targetIndex = Number(this.pendingAvPlayAudioTrackIndex);
+    if (!this.isUsingAvPlay() || !Number.isFinite(targetIndex) || targetIndex < 0) {
+      return false;
+    }
+
+    const avplay = this.getAvPlay();
+    if (!avplay || typeof avplay.setSelectTrack !== "function") {
+      return false;
+    }
+
+    try {
+      avplay.setSelectTrack("AUDIO", targetIndex);
+      this.pendingAvPlayAudioTrackIndex = -1;
+      this.selectedAvPlayAudioTrackIndex = targetIndex;
+      this.syncAvPlayTrackInfo({ force: true });
+      this.emitVideoEvent("avplaytrackschanged", { playbackEngine: this.playbackEngine });
       return true;
     } catch (_) {
       return false;
@@ -626,6 +704,7 @@ export const PlayerController = {
         // Ignore subtitle mute failures.
       }
       this.selectedAvPlaySubtitleTrackIndex = -1;
+      this.selectedWebOsEmbeddedSubtitleTrackIndex = -1;
       this.emitVideoEvent("avplaytrackschanged", { playbackEngine: this.playbackEngine });
       return true;
     }
@@ -652,7 +731,8 @@ export const PlayerController = {
     }
 
     this.selectedAvPlaySubtitleTrackIndex = targetIndex;
-    this.syncAvPlayTrackInfo();
+    this.selectedWebOsEmbeddedSubtitleTrackIndex = -1;
+    this.syncAvPlayTrackInfo({ force: true });
     this.emitVideoEvent("avplaytrackschanged", { playbackEngine: this.playbackEngine });
     return true;
   },
@@ -676,6 +756,7 @@ export const PlayerController = {
         // Ignore subtitle mute/unmute failures.
       }
       this.selectedAvPlaySubtitleTrackIndex = -1;
+      this.selectedWebOsEmbeddedSubtitleTrackIndex = -1;
       this.emitVideoEvent("avplaytrackschanged", { playbackEngine: this.playbackEngine });
       return true;
     } catch (_) {
@@ -751,6 +832,7 @@ export const PlayerController = {
     this.avplaySubtitleTracks = [];
     this.selectedAvPlayAudioTrackIndex = -1;
     this.selectedAvPlaySubtitleTrackIndex = -1;
+    this.pendingAvPlayAudioTrackIndex = -1;
     this.avplayReady = false;
     this.avplayEnded = false;
     this.avplayCurrentTimeMs = 0;
@@ -841,7 +923,7 @@ export const PlayerController = {
       this.avplayReady = true;
       this.avplayEnded = false;
       this.refreshAvPlayTimeline();
-      this.syncAvPlayTrackInfo();
+      this.syncAvPlayTrackInfo({ force: true });
       this.emitVideoEvent("loadedmetadata", { playbackEngine: this.playbackEngine });
       this.emitVideoEvent("loadeddata", { playbackEngine: this.playbackEngine });
       this.emitVideoEvent("canplay", { playbackEngine: this.playbackEngine });
@@ -852,10 +934,14 @@ export const PlayerController = {
         this.startAvPlayTickTimer();
         this.emitVideoEvent("playing", { playbackEngine: this.playbackEngine });
         setTimeout(() => {
+          this.applyPendingAvPlayAudioTrackSelection();
+        }, 0);
+        setTimeout(() => {
           if (!this.isUsingAvPlay()) {
             return;
           }
-          this.syncAvPlayTrackInfo();
+          this.applyPendingAvPlayAudioTrackSelection();
+          this.syncAvPlayTrackInfo({ force: true });
           this.emitVideoEvent("avplaytrackschanged", { playbackEngine: this.playbackEngine });
         }, 500);
       } catch (error) {
@@ -1045,6 +1131,12 @@ export const PlayerController = {
     const avplayEngine = this.getPlatformAvplayEngineName();
     const isTizenRuntime = Platform.isTizen();
     const isLivePlayback = this.isLivePlaybackItemType(itemType);
+    const canUseAvPlay = this.canUseAvPlay();
+    const canUseHlsJs = this.canUseHlsJs();
+    const canUseDashJs = this.canUseDashJs();
+    const canPlayNativeHls = this.canPlayNatively("application/vnd.apple.mpegurl");
+    const canPlayNativeDash = this.canPlayNatively("application/dash+xml");
+    const canPlayNativeSmooth = this.canPlayNatively("application/vnd.ms-sstr+xml");
     const pushCandidate = (target, candidate) => {
       const normalized = String(candidate || "").trim();
       if (!normalized || target.includes(normalized)) {
@@ -1055,19 +1147,19 @@ export const PlayerController = {
 
     if (this.isLikelyHlsMimeType(normalizedSourceType)) {
       const candidates = [];
-      if (isLivePlayback && this.canUseHlsJs()) {
+      if (isLivePlayback && canUseHlsJs) {
         pushCandidate(candidates, "hls.js");
       }
-      if (isTizenRuntime && this.canUseHlsJs()) {
+      if (isTizenRuntime && canUseHlsJs) {
         pushCandidate(candidates, "hls.js");
       }
-      if (this.canPlayNatively("application/vnd.apple.mpegurl")) {
+      if (canPlayNativeHls) {
         pushCandidate(candidates, "native-hls");
       }
-      if (!isTizenRuntime && this.canUseHlsJs()) {
+      if (!isTizenRuntime && canUseHlsJs) {
         pushCandidate(candidates, "hls.js");
       }
-      if (this.canUseAvPlay()) {
+      if (canUseAvPlay) {
         pushCandidate(candidates, avplayEngine);
       }
       return candidates;
@@ -1075,22 +1167,22 @@ export const PlayerController = {
 
     if (this.isLikelyDashMimeType(normalizedSourceType)) {
       const candidates = [];
-      if (isLivePlayback && this.canUseDashJs()) {
+      if (isLivePlayback && canUseDashJs) {
         pushCandidate(candidates, "dash.js");
       }
-      if (isTizenRuntime && this.canUseDashJs()) {
+      if (isTizenRuntime && canUseDashJs) {
         pushCandidate(candidates, "dash.js");
       }
-      if (Platform.isWebOS() && this.canPlayNatively("application/dash+xml")) {
+      if (Platform.isWebOS() && canPlayNativeDash) {
         pushCandidate(candidates, "native-dash");
       }
-      if (!isTizenRuntime && this.canUseDashJs()) {
+      if (!isTizenRuntime && canUseDashJs) {
         pushCandidate(candidates, "dash.js");
       }
-      if (this.canPlayNatively("application/dash+xml")) {
+      if (canPlayNativeDash) {
         pushCandidate(candidates, "native-dash");
       }
-      if (this.canUseAvPlay()) {
+      if (canUseAvPlay) {
         pushCandidate(candidates, avplayEngine);
       }
       return candidates;
@@ -1098,10 +1190,10 @@ export const PlayerController = {
 
     if (this.isLikelySmoothStreamingMimeType(normalizedSourceType)) {
       const candidates = [];
-      if (this.canPlayNatively("application/vnd.ms-sstr+xml")) {
+      if (canPlayNativeSmooth) {
         pushCandidate(candidates, "native-file");
       }
-      if (this.canUseAvPlay()) {
+      if (canUseAvPlay) {
         pushCandidate(candidates, avplayEngine);
       }
       return candidates;
@@ -1111,11 +1203,11 @@ export const PlayerController = {
     if (isTizenRuntime) {
       pushCandidate(candidates, "native-file");
     }
-    if (!isTizenRuntime && this.canUseAvPlay()) {
+    pushCandidate(candidates, "native-file");
+    if (!isTizenRuntime && canUseAvPlay) {
       pushCandidate(candidates, avplayEngine);
     }
-    pushCandidate(candidates, "native-file");
-    if (isTizenRuntime && this.canUseAvPlay()) {
+    if (isTizenRuntime && canUseAvPlay) {
       pushCandidate(candidates, avplayEngine);
     }
     return candidates;
@@ -1629,6 +1721,8 @@ export const PlayerController = {
       return false;
     }
 
+    this.selectedWebOsEmbeddedAudioTrackIndex = -1;
+
     const mediaId = this.syncNativeMediaId();
     if (mediaId) {
       this.requestWebOsMediaCommand("selectTrack", {
@@ -1660,6 +1754,87 @@ export const PlayerController = {
     return true;
   },
 
+  setWebOsEmbeddedAudioTrack(trackIndex) {
+    if (!Platform.isWebOS() || !this.video || !this.isUsingNativePlayback()) {
+      return false;
+    }
+
+    const targetIndex = Number(trackIndex);
+    if (!Number.isFinite(targetIndex) || targetIndex < 0) {
+      this.selectedWebOsEmbeddedAudioTrackIndex = -1;
+      return false;
+    }
+
+    const applySelection = (mediaId) => {
+      if (!mediaId) {
+        return;
+      }
+
+      this.requestWebOsMediaCommand("selectTrack", {
+        type: "audio",
+        mediaId,
+        index: targetIndex
+      }).catch(() => {
+        // Ignore Luna audio track selection failures.
+      });
+
+      const audioTrackList = this.video?.audioTracks || this.video?.webkitAudioTracks || this.video?.mozAudioTracks || null;
+      if (!audioTrackList) {
+        return;
+      }
+
+      let tracks = [];
+      try {
+        tracks = Array.from(audioTrackList).filter(Boolean);
+      } catch (_) {
+        const trackCount = Number(audioTrackList.length || 0);
+        for (let trackIndex = 0; trackIndex < trackCount; trackIndex += 1) {
+          const track = audioTrackList[trackIndex] || audioTrackList.item?.(trackIndex) || null;
+          if (track) {
+            tracks.push(track);
+          }
+        }
+      }
+
+      tracks.forEach((track, trackListIndex) => {
+        const selected = trackListIndex === targetIndex;
+        try {
+          if ("enabled" in track) {
+            track.enabled = selected;
+          }
+        } catch (_) {
+          // Best effort.
+        }
+        try {
+          if ("selected" in track) {
+            track.selected = selected;
+          }
+        } catch (_) {
+          // Best effort.
+        }
+      });
+    };
+
+    this.selectedWebOsEmbeddedAudioTrackIndex = targetIndex;
+
+    const mediaId = this.syncNativeMediaId();
+    if (mediaId) {
+      applySelection(mediaId);
+      return true;
+    }
+
+    this.waitForNativeMediaId().then((resolvedMediaId) => {
+      if (Number(this.selectedWebOsEmbeddedAudioTrackIndex) !== targetIndex) {
+        return;
+      }
+      applySelection(resolvedMediaId);
+    }).catch(() => {
+      // Ignore media-id lookup failures.
+    });
+
+    return true;
+  },
+
   setNativeTextTrack(index) {
     if (!this.video) {
       return false;
@@ -1683,6 +1858,8 @@ export const PlayerController = {
     if (!Number.isFinite(targetIndex) || targetIndex < -1 || targetIndex >= tracks.length) {
       return false;
     }
+
+    this.selectedWebOsEmbeddedSubtitleTrackIndex = -1;
 
     const mediaId = this.syncNativeMediaId();
     if (mediaId && Platform.isWebOS()) {
@@ -1721,6 +1898,75 @@ export const PlayerController = {
       } catch (_) {
         // Best effort.
       }
+    });
+
+    return true;
+  },
+
+  setWebOsEmbeddedSubtitleTrack(trackIndex) {
+    if (!Platform.isWebOS() || !this.video || !this.isUsingNativePlayback()) {
+      return false;
+    }
+
+    const targetIndex = Number(trackIndex);
+    if (!Number.isFinite(targetIndex) || targetIndex < -1) {
+      return false;
+    }
+
+    const applySelection = (mediaId) => {
+      if (!mediaId) {
+        return;
+      }
+
+      if (targetIndex < 0) {
+        this.requestWebOsMediaCommand("setSubtitleEnable", {
+          mediaId,
+          enable: false
+        }).catch(() => {
+          // Ignore Luna subtitle disable failures.
+        });
+        return;
+      }
+
+      this.requestWebOsMediaCommand("setSubtitleEnable", {
+        mediaId,
+        enable: true
+      }).catch(() => {
+        // Ignore Luna subtitle enable failures.
+      });
+
+      setTimeout(() => {
+        if (Number(this.selectedWebOsEmbeddedSubtitleTrackIndex) !== targetIndex) {
+          return;
+        }
+        if (this.nativeMediaId && mediaId !== this.nativeMediaId) {
+          return;
+        }
+        this.requestWebOsMediaCommand("selectTrack", {
+          type: "text",
+          mediaId,
+          index: targetIndex
+        }).catch(() => {
+          // Ignore Luna subtitle track selection failures.
+        });
+      }, 350);
+    };
+
+    this.selectedWebOsEmbeddedSubtitleTrackIndex = targetIndex;
+
+    const mediaId = this.syncNativeMediaId();
+    if (mediaId) {
+      applySelection(mediaId);
+      return true;
+    }
+
+    this.waitForNativeMediaId().then((resolvedMediaId) => {
+      if (Number(this.selectedWebOsEmbeddedSubtitleTrackIndex) !== targetIndex) {
+        return;
+      }
+      applySelection(resolvedMediaId);
+    }).catch(() => {
+      // Ignore media-id lookup failures.
     });
 
     return true;
@@ -1878,19 +2124,8 @@ export const PlayerController = {
 
     if (!this.lifecycleBound) {
       this.lifecycleBound = true;
-        this.lifecycleFlushHandler = () => {
-          const context = this.createProgressContext();
-          if (!context.itemId) {
-            return;
-          }
-          this.flushProgress(
-            Math.floor(this.getCurrentTimeSeconds() * 1000),
-            Math.floor(this.getDurationSeconds() * 1000),
-            false,
-            context
-          ).finally(() => {
-            this.pushProgressIfDue(true);
-          });
+      this.lifecycleFlushHandler = () => {
+        this.flushCurrentProgress({ forceCloudSync: true });
       };
       this.visibilityFlushHandler = () => {
         if (document.visibilityState === "hidden") {
@@ -1905,6 +2140,8 @@ export const PlayerController = {
 
   async play(url, { itemId = null, itemType = "movie", videoId = null, season = null, episode = null, title = null, poster = null, background = null, episodeTitle = null, requestHeaders = {}, mediaSourceType = null, forceEngine = null } = {}) {
     if (!this.video) return;
+
+    await this.flushCurrentProgress({ allowCloudSync: false });
 
     try {
       this.video.muted = false;
@@ -2068,6 +2305,8 @@ export const PlayerController = {
   pause() {
     if (!this.video) return;
 
+    this.flushCurrentProgress({ forceCloudSync: true });
+
     if (this.isUsingAvPlay()) {
       const avplay = this.getAvPlay();
       if (!avplay) {
@@ -2090,6 +2329,8 @@ export const PlayerController = {
   resume() {
     if (!this.video) return;
 
+    this.flushCurrentProgress({ forceCloudSync: false });
+
     if (this.isUsingAvPlay()) {
       const avplay = this.getAvPlay();
       if (!avplay) {
@@ -2100,6 +2341,12 @@ export const PlayerController = {
         this.isPlaying = true;
         this.startAvPlayTickTimer();
         this.emitVideoEvent("playing", { playbackEngine: this.playbackEngine });
+        setTimeout(() => {
+          this.applyPendingAvPlayAudioTrackSelection();
+        }, 0);
+        setTimeout(() => {
+          this.applyPendingAvPlayAudioTrackSelection();
+        }, 300);
       } catch (error) {
         this.lastPlaybackErrorCode = this.mapAvPlayErrorToMediaCode(error?.name || error?.message || error);
         console.warn("Playback resume rejected", error);
@@ -2121,15 +2368,7 @@ export const PlayerController = {
   stop() {
     if (!this.video) return;
 
-    const context = this.createProgressContext();
-    this.flushProgress(
-      Math.floor(this.getCurrentTimeSeconds() * 1000),
-      Math.floor(this.getDurationSeconds() * 1000),
-      false,
-      context
-    ).finally(() => {
-      this.pushProgressIfDue(true);
-    });
+    const flushPromise = this.flushCurrentProgress({ forceCloudSync: true });
 
     this.video.pause();
     this.teardownAdaptiveInstances();
@@ -2161,6 +2400,8 @@ export const PlayerController = {
       clearInterval(this.progressSaveTimer);
       this.progressSaveTimer = null;
     }
+
+    return flushPromise;
   },
 
   createProgressContext() {
@@ -2177,7 +2418,26 @@ export const PlayerController = {
     };
   },
 
-  async flushProgress(positionMs, durationMs, clear = false, context = null) {
+  async flushCurrentProgress({ forceCloudSync = false, allowCloudSync = true } = {}) {
+    const context = this.createProgressContext();
+    if (!context.itemId) {
+      return false;
+    }
+
+    await this.flushProgress(
+      Math.floor(this.getCurrentTimeSeconds() * 1000),
+      Math.floor(this.getDurationSeconds() * 1000),
+      false,
+      context,
+      { allowCloudSync: allowCloudSync && !forceCloudSync }
+    );
+    if (forceCloudSync) {
+      await this.pushProgressIfDue(true);
+    }
+    return true;
+  },
+
+  async flushProgress(positionMs, durationMs, clear = false, context = null, { allowCloudSync = true } = {}) {
     const active = context || this.createProgressContext();
     if (!active?.itemId) {
       return;
@@ -2186,6 +2446,14 @@ export const PlayerController = {
     const safePosition = Number(positionMs || 0);
     const safeDuration = Number(durationMs || 0);
     const hasFiniteDuration = Number.isFinite(safeDuration) && safeDuration > 0;
+    const hasReachedMinimumSyncPosition = Number.isFinite(safePosition)
+      && safePosition >= MIN_PROGRESS_SYNC_DURATION_MS;
+    if (hasFiniteDuration && safeDuration < MIN_PROGRESS_SYNC_DURATION_MS) {
+      return false;
+    }
+    if (!hasFiniteDuration && !hasReachedMinimumSyncPosition) {
+      return false;
+    }
     const isCompleted = hasFiniteDuration && safePosition / safeDuration > 0.95;
 
     if (isCompleted) {
@@ -2201,12 +2469,14 @@ export const PlayerController = {
 
     if (clear || isCompleted) {
       await watchProgressRepository.removeProgress(active.itemId, active.videoId || null);
-      this.pushProgressIfDue(true);
-      return;
+      if (!allowCloudSync) {
+        return true;
+      }
+      return this.pushProgressIfDue(true);
     }
 
     if (!Number.isFinite(safePosition) || safePosition <= 0) {
-      return;
+      return false;
     }
 
     await watchProgressRepository.saveProgress({
@@ -2222,17 +2492,21 @@ export const PlayerController = {
       positionMs: Math.max(0, Math.trunc(safePosition)),
       durationMs: hasFiniteDuration ? Math.max(0, Math.trunc(safeDuration)) : 0
     });
-    this.pushProgressIfDue(false);
+    if (!allowCloudSync) {
+      return true;
+    }
+    return this.pushProgressIfDue(false);
   },
 
   pushProgressIfDue(force = false) {
     const now = Date.now();
     if (!force && (now - Number(this.lastProgressPushAt || 0)) < 30000) {
-      return;
+      return Promise.resolve(false);
     }
     this.lastProgressPushAt = now;
-    WatchProgressSyncService.push().catch((error) => {
+    return WatchProgressSyncService.push().catch((error) => {
       console.warn("Watch progress auto push failed", error);
+      return false;
     });
   }
 

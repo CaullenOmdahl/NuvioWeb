@@ -21,8 +21,8 @@ export const AuthSignInScreen = {
 
   render() {
     this.container.innerHTML = `
-      <div class="qr-layout">
-        <section class="qr-left-panel">
+      <div class="auth-email-layout">
+        <section class="auth-email-brand-panel">
           <div class="qr-brand-lockup">
             <img src="assets/brand/app_logo_wordmark.png" class="qr-logo" alt="Nuvio" />
           </div>
@@ -32,51 +32,49 @@ export const AuthSignInScreen = {
           </div>
         </section>
 
-        <section class="qr-card-panel">
-          <div class="qr-card" style="min-height:auto;padding:56px 52px;">
+        <section class="auth-email-card-panel">
+          <div class="auth-email-card">
             <header class="qr-card-header">
               <h2 class="qr-card-title">${t("auth.email.cardTitle", "Email Login")}</h2>
               <p class="qr-card-subtitle">${t("auth.email.cardSubtitle", "Enter your credentials below")}</p>
             </header>
 
-            <form id="email-login-form" autocomplete="on" style="display:flex;flex-direction:column;gap:20px;margin-top:32px;">
-              <div style="display:flex;flex-direction:column;gap:6px;">
-                <label for="email-input" style="font-size:20px;color:var(--text-secondary);">${t("auth.email.emailLabel", "Email")}</label>
+            <form id="email-login-form" class="auth-email-form" autocomplete="on">
+              <div class="auth-email-field">
+                <label class="auth-email-label" for="email-input">${t("auth.email.emailLabel", "Email")}</label>
                 <input
                   id="email-input"
-                  class="focusable"
+                  class="auth-email-input focusable"
                   type="email"
                   autocomplete="email"
                   autocapitalize="off"
                   spellcheck="false"
                   placeholder="${t("auth.email.emailPlaceholder", "you@example.com")}"
                   data-action="emailInput"
-                  style="width:100%;height:72px;padding:0 24px;font-size:26px;border-radius:12px;border:2px solid var(--border-color, #333);background:var(--bg-elevated, #1a1d24);color:var(--text-color, #f4f7fb);outline:none;box-sizing:border-box;"
                 />
               </div>
-              <div style="display:flex;flex-direction:column;gap:6px;">
-                <label for="password-input" style="font-size:20px;color:var(--text-secondary);">${t("auth.email.passwordLabel", "Password")}</label>
+              <div class="auth-email-field">
+                <label class="auth-email-label" for="password-input">${t("auth.email.passwordLabel", "Password")}</label>
                 <input
                   id="password-input"
-                  class="focusable"
+                  class="auth-email-input focusable"
                   type="password"
                   autocomplete="current-password"
                   placeholder="${t("auth.email.passwordPlaceholder", "Enter your password")}"
                   data-action="passwordInput"
-                  style="width:100%;height:72px;padding:0 24px;font-size:26px;border-radius:12px;border:2px solid var(--border-color, #333);background:var(--bg-elevated, #1a1d24);color:var(--text-color, #f4f7fb);outline:none;box-sizing:border-box;"
                 />
               </div>
-              <div id="email-login-error" style="min-height:36px;font-size:22px;color:var(--error-color, #ef4444);text-align:center;">${this.errorMessage || ""}</div>
+              <div id="email-login-error" class="auth-email-error">${this.errorMessage || ""}</div>
             </form>
 
-            <div class="qr-actions" style="padding-top:24px;">
-              <button type="button" id="email-submit-btn" class="qr-action-btn qr-action-btn-primary focusable" data-action="submit"${this.isSubmitting ? " disabled" : ""}>
+            <div class="auth-email-actions">
+              <button type="button" id="email-submit-btn" class="auth-email-primary-btn focusable" data-action="submit"${this.isSubmitting ? " disabled" : ""}>
                 ${this.isSubmitting ? t("auth.email.signingIn", "Signing in...") : t("auth.email.signIn", "Sign In")}
               </button>
-              <button type="button" id="email-qr-btn" class="qr-action-btn qr-action-btn-secondary focusable" data-action="qrLogin">
+              <button type="button" id="email-qr-btn" class="auth-email-secondary-btn focusable" data-action="qrLogin">
                 ${t("auth.email.useQrCode", "Use QR Code")}
               </button>
-              <button type="button" id="email-back-btn" class="qr-action-btn qr-action-btn-secondary focusable" data-action="back">
+              <button type="button" id="email-back-btn" class="auth-email-secondary-btn focusable" data-action="back">
                 ${t("auth.email.continueAsGuest", "Continue as Guest")}
               </button>
             </div>
@@ -110,7 +108,7 @@ export const AuthSignInScreen = {
     this.container.querySelectorAll("input.focusable").forEach((input) => {
       input.addEventListener("focus", () => {
         input.style.borderColor = "var(--focus-color, #6366f1)";
-        input.style.boxShadow = "0 0 0 2px var(--focus-color, #6366f1)";
+        input.style.boxShadow = "0 0 0 2px rgb(var(--focus-color-rgb) / 0.8)";
       });
       input.addEventListener("blur", () => {
         input.style.borderColor = "var(--border-color, #333)";

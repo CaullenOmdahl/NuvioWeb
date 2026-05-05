@@ -2,10 +2,16 @@
   "name": "nuvio-tv-web",
   "private": true,
   "type": "module",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "scripts": {
     "build": "node ./scripts/build.mjs",
-    "build:on-commit": "node ./scripts/commit-build-poller.mjs",
+    "build:on-release": "node ./scripts/release-build-poller.mjs",
+    "install:webos": "node ./scripts/ares-install-webos.mjs",
+    "inspect:webos": "node ./scripts/ares-inspect-webos.mjs",
+    "logs:webos": "node ./scripts/ares-logs-webos.mjs",
+    "console:webos": "node ./scripts/remote-console-server.mjs",
+    "media:webos-sim": "node --require ./scripts/localhost-listen-patch.cjs ./services/com.nuvio.lg.service/runtime/media-http.cjs",
+    "package:webos": "npm run build && node ./scripts/package-webos.mjs",
     "serve": "node ./scripts/serve.mjs",
     "sync": "node ./scripts/sync-wrapper.mjs",
     "sync:tizen": "node ./scripts/sync-wrapper.mjs --tizen",
@@ -13,10 +19,36 @@
     "sync:tizenbrew": "node ./scripts/sync-tizenbrew.mjs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "tauri:build:local": "tauri build --bundles app --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/plugin-transform-arrow-functions": "^7.27.1",
+    "@babel/plugin-transform-async-to-generator": "^7.28.6",
+    "@babel/plugin-transform-block-scoping": "^7.28.6",
+    "@babel/plugin-transform-nullish-coalescing-operator": "^7.28.6",
+    "@babel/plugin-transform-optional-chaining": "^7.28.6",
+    "@babel/plugin-transform-regenerator": "^7.29.0",
+    "@babel/plugin-transform-runtime": "^7.29.0",
+    "@babel/plugin-transform-shorthand-properties": "^7.27.1",
+    "@babel/preset-env": "^7.29.2",
+    "@babel/runtime": "^7.29.2",
+    "@chialab/esbuild-plugin-babel": "^0.19.1",
+    "@csstools/postcss-global-data": "^4.0.0",
     "@tauri-apps/cli": "^2.10.1",
-    "esbuild": "^0.27.3"
+    "autoprefixer": "^10.4.27",
+    "babel-loader": "^10.1.1",
+    "core-js": "^3.49.0",
+    "cssnano": "^7.1.4",
+    "esbuild": "^0.27.3",
+    "esbuild-plugin-babel": "^0.2.3",
+    "postcss": "^8.5.9",
+    "postcss-custom-properties": "^15.0.1",
+    "regenerator-runtime": "^0.14.1"
+  },
+  "dependencies": {
+    "intersection-observer": "^0.12.2",
+    "whatwg-fetch": "^3.6.20"
   }
 }

@@ -4,8 +4,11 @@ import { addonRepository } from "../../../data/repository/addonRepository.js";
 import { catalogRepository } from "../../../data/repository/catalogRepository.js";
 import { watchProgressRepository } from "../../../data/repository/watchProgressRepository.js";
 import { watchedItemsRepository } from "../../../data/repository/watchedItemsRepository.js";
+import { savedLibraryRepository } from "../../../data/repository/savedLibraryRepository.js";
 import { LayoutPreferences } from "../../../data/local/layoutPreferences.js";
+import { ContinueWatchingPreferences } from "../../../data/local/continueWatchingPreferences.js";
 import { HomeCatalogStore } from "../../../data/local/homeCatalogStore.js";
+import { HomeImageCacheStore } from "../../../data/local/homeImageCacheStore.js";
 import { TmdbService } from "../../../core/tmdb/tmdbService.js";
 import { TmdbMetadataService } from "../../../core/tmdb/tmdbMetadataService.js";
 import { TmdbSettingsStore } from "../../../data/local/tmdbSettingsStore.js";
@@ -14,6 +17,7 @@ import { ProfileManager } from "../../../core/profile/profileManager.js";
 import { Platform } from "../../../platform/index.js";
 import { YOUTUBE_PROXY_URL } from "../../../config.js";
 import { I18n } from "../../../i18n/index.js";
+import { renderLogoLoadingMarkup } from "../../components/loadingIndicator.js";
 import {
   buildModernNavigationRows,
   buildModernRowKey,
@@ -52,17 +56,27 @@ const CW_PROGRESS_END_THRESHOLD = 0.85;
 const CW_ENTER_DELAY_MS = 320;
 const CW_HOLD_DELAY_MS = 650;
 const HOME_INITIAL_CATALOG_LOAD = 10;
-const HOME_MAX_ITEMS_PER_ROW_DEFAULT = 15;
-const HOME_MAX_ITEMS_PER_ROW_CONSTRAINED = 10;
+const HOME_ITEMS_BEFORE_SEE_ALL = 10;
 const HOME_LOADING_ROW_ITEMS_DEFAULT = 10;
-const HOME_LOADING_ROW_ITEMS_CONSTRAINED = 8;
+const HOME_LOADING_ROW_ITEMS_CONSTRAINED = 4;
+const HOME_VISIBLE_ROWS_CONSTRAINED_INITIAL = 5;
+const HOME_VISIBLE_ROWS_CONSTRAINED_INCREMENT = 3;
 const HOME_ROW_TIMEOUT_MS = 3500;
 const HOME_ROW_RETRY_TIMEOUT_MS = 12000;
+const HOME_BOOT_PRELOAD_BUDGET_MS = 10000;
+const HOME_BOOT_IMAGE_PRELOAD_MIN_MS = 800;
+const HOME_BOOT_IMAGE_PRELOAD_MAX_MS = 2200;
+const HOME_CACHED_IMAGE_PREWARM_MAX_MS = 1600;
+const HOME_CACHED_IMAGE_PREWARM_MIN_MS = 300;
+const HOME_IMAGE_PRELOAD_LIMIT = 100;
+const HOME_IMAGE_PRELOAD_LIMIT_CONSTRAINED = 40;
 const HOME_BACKGROUND_RENDER_DELAY_MS = 120;
 const HOME_BACKGROUND_RENDER_DELAY_LEGACY_MS = 180;
 const CW_META_TIMEOUT_MS = 1800;
 const CW_META_TIMEOUT_TV_MS = 4200;
 const CW_NEXT_UP_META_TIMEOUT_MS = 2200;
+const CW_BACKGROUND_META_TIMEOUT_MS = 9000;
+const CW_BACKGROUND_NEXT_UP_META_TIMEOUT_MS = 9000;
 
 function t(key, params = {}, fallback = key) {
   return I18n.t(key, params, { fallback });
@@ -465,6 +479,48 @@ function applyTrailerAudioPreferences(source, prefs = {}) {
   return source;
 }
 
+function suppressBackgroundTrailerMediaControls(mediaElement = null) {
+  if (mediaElement) {
+    mediaElement.controls = false;
+    mediaElement.removeAttribute("controls");
+    mediaElement.setAttribute("controlslist", "nodownload nofullscreen noplaybackrate noremoteplayback");
+    mediaElement.setAttribute("aria-hidden", "true");
+    mediaElement.setAttribute("tabindex", "-1");
+    try {
+      mediaElement.disablePictureInPicture = true;
+    } catch (_) {
+    }
+    try {
+      mediaElement.disableRemotePlayback = true;
+    } catch (_) {
+    }
+  }
+
+  const mediaSession = globalThis.navigator?.mediaSession;
+  if (!mediaSession) {
+    return;
+  }
+  [
+    "play",
+    "pause",
+    "stop",
+    "seekbackward",
+    "seekforward",
+    "seekto",
+    "previoustrack",
+    "nexttrack"
+  ].forEach((action) => {
+    try {
+      mediaSession.setActionHandler(action, null);
+    } catch (_) {
+    }
+  });
+  try {
+    mediaSession.playbackState = "none";
+  } catch (_) {
+  }
+}
+
 function withTimeout(promise, ms, fallbackValue) {
   let timer = null;
   return Promise.race([
@@ -477,6 +533,92 @@ function withTimeout(promise, ms, fallbackValue) {
       clearTimeout(timer);
     }
   });
+}
+
+function remainingBudgetMs(deadlineMs = 0) {
+  const deadline = Number(deadlineMs || 0);
+  if (!Number.isFinite(deadline) || deadline <= 0) {
+    return 0;
+  }
+  return Math.max(0, deadline - Date.now());
+}
+
+function mergeRowsByKey(rows = []) {
+  const byKey = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const key = row?.homeCatalogKey || buildCatalogOrderKey(row?.addonId, row?.type, row?.catalogId);
+    if (!key) {
+      return;
+    }
+    byKey.set(key, row);
+  });
+  return Array.from(byKey.values());
+}
+
+const preloadedHomeImageUrls = new Set();
+const pendingHomeImagePreloads = new Map();
+
+function preloadImageUrl(url) {
+  const src = String(url || "").trim();
+  if (!src || typeof Image !== "function") {
+    return Promise.resolve(false);
+  }
+  if (preloadedHomeImageUrls.has(src)) {
+    return Promise.resolve(true);
+  }
+  if (pendingHomeImagePreloads.has(src)) {
+    return pendingHomeImagePreloads.get(src);
+  }
+  const promise = new Promise((resolve) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.loading = "eager";
+    image.onload = () => resolve(true);
+    image.onerror = () => resolve(false);
+    image.src = src;
+    if (typeof image.decode === "function") {
+      image.decode().then(() => resolve(true)).catch(() => {
+        if (image.complete) {
+          resolve(true);
+        }
+      });
+    }
+  }).then((loaded) => {
+    if (loaded) {
+      preloadedHomeImageUrls.add(src);
+    }
+    return loaded;
+  }).finally(() => {
+    pendingHomeImagePreloads.delete(src);
+  });
+  pendingHomeImagePreloads.set(src, promise);
+  return promise;
+}
+
+function normalizeImageUrls(urls = [], limit = 0) {
+  const seen = new Set();
+  const normalized = [];
+  (Array.isArray(urls) ? urls : []).forEach((value) => {
+    const url = String(value || "").trim();
+    if (!url || url.startsWith("data:") || url.startsWith("blob:") || seen.has(url)) {
+      return;
+    }
+    seen.add(url);
+    normalized.push(url);
+  });
+  const max = Number(limit || 0);
+  return max > 0 ? normalized.slice(0, max) : normalized;
+}
+
+function preloadHomeImageUrls(urls = [], { limit = 0, remember = true } = {}) {
+  const normalized = normalizeImageUrls(urls, limit);
+  if (!normalized.length) {
+    return Promise.resolve([]);
+  }
+  if (remember) {
+    HomeImageCacheStore.rememberUrls(normalized);
+  }
+  return Promise.allSettled(normalized.map((url) => preloadImageUrl(url)));
 }
 
 async function resolveTrailerMetaWithTmdbFallback(meta = {}, itemType = "movie") {
@@ -526,9 +668,11 @@ function getContinueWatchingMetaTimeout(timeoutMs) {
 }
 
 function progressFractionForContinueWatching(item = {}) {
-  const explicitPercent = Number(item.progressPercent);
-  if (Number.isFinite(explicitPercent) && explicitPercent > 0) {
-    return Math.max(0, Math.min(1, explicitPercent / 100));
+  if (item.progressPercent != null && item.progressPercent !== "") {
+    const explicitPercent = Number(item.progressPercent);
+    if (Number.isFinite(explicitPercent)) {
+      return Math.max(0, Math.min(1, explicitPercent / 100));
+    }
   }
   const durationMs = Number(item.durationMs || 0);
   const positionMs = Number(item.positionMs || 0);
@@ -540,11 +684,41 @@ function progressFractionForContinueWatching(item = {}) {
 
 function isSeriesTypeForContinueWatching(type) {
   const normalized = String(type || "").toLowerCase();
-  return normalized === "series";
+  return normalized === "series" || normalized === "tv";
+}
+
+function isMalformedNextUpSeedContentId(contentId) {
+  const normalized = String(contentId || "").trim().toLowerCase();
+  return !normalized || normalized === "tmdb" || normalized === "imdb" || normalized === "trakt"
+    || normalized === "tmdb:" || normalized === "imdb:" || normalized === "trakt:";
+}
+
+function normalizeNextUpDismissPart(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : -1;
+}
+
+function nextUpDismissKey(contentId, season, episode) {
+  return `${String(contentId || "").trim()}|${normalizeNextUpDismissPart(season)}|${normalizeNextUpDismissPart(episode)}`;
 }
 
 function isCompletedForContinueWatching(item = {}) {
   return progressFractionForContinueWatching(item) >= CW_PROGRESS_END_THRESHOLD;
+}
+
+function shouldUseAsCompletedNextUpSeed(item = {}) {
+  if (isMalformedNextUpSeedContentId(item?.contentId)) {
+    return false;
+  }
+  if (!isCompletedForContinueWatching(item)) {
+    return false;
+  }
+  const source = String(item.source || "").toLowerCase();
+  if (source !== "trakt_playback") {
+    return true;
+  }
+  const explicitPercent = Number(item.progressPercent);
+  return Number.isFinite(explicitPercent) && explicitPercent >= 95;
 }
 
 function isInProgressForContinueWatching(item = {}) {
@@ -603,7 +777,7 @@ function hasEpisodeAiredForContinueWatching(released) {
 
 function buildProgressStatus(item) {
   if (item?.isNextUp) {
-    return t("home.continueStatusNextUp", {}, "Next Up");
+    return t("home.continueStatusNextUp", {}, "Next episode");
   }
   const durationMs = Number(item?.durationMs || 0);
   const positionMs = Number(item?.positionMs || 0);
@@ -630,7 +804,7 @@ function buildProgressFraction(item) {
 }
 
 function buildCatalogLoadingItems(rowKey, count = HOME_LOADING_ROW_ITEMS_DEFAULT) {
-  const safeCount = Math.max(1, Math.min(HOME_MAX_ITEMS_PER_ROW_DEFAULT, Number(count || HOME_LOADING_ROW_ITEMS_DEFAULT)));
+  const safeCount = Math.max(1, Math.min(HOME_ITEMS_BEFORE_SEE_ALL, Number(count || HOME_LOADING_ROW_ITEMS_DEFAULT)));
   return Array.from({ length: safeCount }, (_, index) => ({
     id: `${rowKey || "row"}__loading_${index}`,
     name: t("common.loading", {}, "Loading"),
@@ -698,6 +872,8 @@ function normalizeContinueWatchingItem(item) {
     logo: firstNonEmpty(item.logo),
     description: firstNonEmpty(item.description),
     releaseInfo: firstNonEmpty(item.releaseInfo),
+    seedSeason: Number.isFinite(Number(item.seedSeason)) ? Number(item.seedSeason) : null,
+    seedEpisode: Number.isFinite(Number(item.seedEpisode)) ? Number(item.seedEpisode) : null,
     genres: Array.isArray(item.genres) ? item.genres.filter(Boolean) : [],
     runtimeMinutes: Number(item.runtimeMinutes ?? item.runtime ?? 0) || 0,
     imdbRating: resolveImdbRating(item),
@@ -1149,7 +1325,7 @@ function renderLegacyCatalogRowsMarkup(rows = [], options = {}) {
     focusedRowKey = "",
     focusedItemIndex = -1,
     expandFocusedPoster = false,
-    rowItemLimit = HOME_MAX_ITEMS_PER_ROW_DEFAULT
+    rowItemLimit = HOME_ITEMS_BEFORE_SEE_ALL
   } = options;
   const catalogSeeAllMap = new Map();
   const sectionsMarkup = [];
@@ -1179,14 +1355,11 @@ function renderLegacyCatalogRowsMarkup(rows = [], options = {}) {
 
     const rowTitle = formatCatalogRowTitle(rowData.catalogName, rowData.type, showCatalogTypeSuffix);
     const rowSubtitle = layoutMode === "classic" && showCatalogAddonName && rowData.addonName
-      ? `from ${rowData.addonName}`
+      ? t("catalog_from_addon", [rowData.addonName], "from %1$s")
       : "";
-    const maxItems = Math.max(1, Number(rowItemLimit || HOME_MAX_ITEMS_PER_ROW_DEFAULT));
+    const maxItems = Math.max(1, Number(rowItemLimit || HOME_ITEMS_BEFORE_SEE_ALL));
     const hasSeeAll = !isLoading && items.length > maxItems;
-    const gridLimit = Math.max(1, hasSeeAll ? maxItems - 1 : maxItems);
-    const visibleItems = layoutMode === "grid"
-      ? rowItems.slice(0, gridLimit)
-      : rowItems.slice(0, maxItems);
+    const visibleItems = rowItems.slice(0, maxItems);
     const cardsMarkup = visibleItems.map((item, itemIndex) => createPosterCardMarkup(
       item,
       rowIndex,
@@ -1199,7 +1372,7 @@ function renderLegacyCatalogRowsMarkup(rows = [], options = {}) {
     const trackMarkup = `
       <div class="${layoutMode === "grid" ? "home-grid-track" : "home-track"}" data-track-row-key="${escapeAttribute(rowKey)}">
         ${cardsMarkup}
-        ${hasSeeAll ? createSeeAllCardMarkup(seeAllId, rowData) : ""}
+        ${hasSeeAll ? createSeeAllCardMarkup(seeAllId, rowData, { layoutMode }) : ""}
       </div>
     `;
 
@@ -1232,9 +1405,13 @@ function renderLegacyCatalogRowsMarkup(rows = [], options = {}) {
   };
 }
 
-function createSeeAllCardMarkup(seeAllId, rowData) {
+function createSeeAllCardMarkup(seeAllId, rowData, options = {}) {
+  const label = t("action_see_all", {}, "See All");
+  const layoutMode = String(options?.layoutMode || "").toLowerCase();
+  const useLandscapePoster = layoutMode === "modern" && Boolean(options?.preferLandscapePoster);
+  const landscapeClass = useLandscapePoster ? " is-landscape" : "";
   return `
-    <article class="home-content-card home-seeall-card focusable"
+    <article class="home-content-card home-poster-card${landscapeClass} focusable"
              data-action="openCatalogSeeAll"
              data-see-all-id="${escapeAttribute(seeAllId)}"
              data-addon-base-url="${escapeAttribute(rowData.addonBaseUrl || "")}"
@@ -1242,11 +1419,19 @@ function createSeeAllCardMarkup(seeAllId, rowData) {
              data-addon-name="${escapeAttribute(rowData.addonName || "")}"
              data-catalog-id="${escapeAttribute(rowData.catalogId || "")}"
              data-catalog-name="${escapeAttribute(rowData.catalogName || "")}"
-             data-catalog-type="${escapeAttribute(rowData.type || "")}">
-      <div class="home-seeall-card-inner">
-        <div class="home-seeall-arrow" aria-hidden="true">&#8594;</div>
-        <div class="home-seeall-label">See All</div>
+             data-catalog-type="${escapeAttribute(rowData.type || "")}"
+             aria-label="${escapeAttribute(label)}">
+      <div class="home-poster-frame">
+        <div class="content-poster placeholder"></div>
+        ${useLandscapePoster ? `
+          <div class="home-poster-landscape-copy" aria-hidden="true">
+            <div class="home-poster-landscape-title">${escapeHtml(label)}</div>
+          </div>
+        ` : ""}
       </div>
+      ${useLandscapePoster ? "" : `<div class="home-poster-copy">
+        <div class="home-poster-title">${escapeHtml(label)}</div>
+      </div>`}
     </article>
   `;
 }
@@ -1372,6 +1557,19 @@ export const HomeScreen = {
     if (!this.container || !layoutMode) {
       return null;
     }
+    let focused = this.container.querySelector(".focusable.focused") || null;
+    if (focused && !focused.isConnected) {
+      focused = null;
+    }
+    if (focused && this.isSidebarNode(focused)) {
+      return {
+        layoutMode,
+        focusZone: "sidebar",
+        sidebarExpanded: Boolean(this.sidebarExpanded),
+        sidebarAction: String(focused.dataset?.action || ""),
+        sidebarSelectedRoute: String(this.container.querySelector(".home-sidebar, .modern-sidebar-shell")?.dataset?.selectedRoute || "")
+      };
+    }
     const viewport = layoutMode === "modern"
       ? this.container.querySelector(".home-modern-rows-viewport")
       : this.container.querySelector(".home-main");
@@ -1379,18 +1577,20 @@ export const HomeScreen = {
       return null;
     }
 
-    let focused = this.container.querySelector(".home-main .focusable.focused") || this.lastMainFocus || null;
+    focused = this.container.querySelector(".home-main .focusable.focused") || this.lastMainFocus || null;
     if (focused && !focused.isConnected) {
       focused = null;
     }
     if (!focused) {
       return null;
     }
-    const trackStates = Object.fromEntries(
-      Array.from(this.container.querySelectorAll("[data-track-row-key]"))
-        .map((track) => [String(track.dataset.trackRowKey || ""), track.scrollLeft])
-        .filter(([key]) => key)
-    );
+    const trackStates = Array.from(
+      this.container.querySelectorAll("[data-track-row-key]"),
+    ).reduce((acc, track) => {
+      const key = String(track.dataset.trackRowKey || "");
+      if (key) acc[key] = track.scrollLeft;
+      return acc;
+    }, {});
     const section = focused?.closest?.("[data-row-key]") || null;
     const rowKey = String(section?.dataset?.rowKey || "");
     let itemIndex = -1;
@@ -1410,6 +1610,7 @@ export const HomeScreen = {
 
     return {
       layoutMode,
+      focusZone: "main",
       mainScrollTop: viewport.scrollTop,
       rowKey,
       itemIndex,
@@ -1436,12 +1637,78 @@ export const HomeScreen = {
     if (!focusState) {
       return false;
     }
+    if (focusState.focusZone === "sidebar") {
+      return this.restoreSidebarFocusState(focusState);
+    }
 
     if (this.layoutMode === "modern") {
       return this.restoreModernFocusState(focusState);
     }
 
     return this.restoreLegacyFocusState(focusState);
+  },
+
+  restoreHomeViewportScrollState(focusState = null) {
+    if (!focusState || focusState.layoutMode !== this.layoutMode || !this.container) {
+      return false;
+    }
+    const viewport = this.getHomeViewport();
+    if (!viewport) {
+      return false;
+    }
+
+    Object.entries(focusState.trackStates || {}).forEach(([rowKey, scrollLeft]) => {
+      const track = this.container.querySelector(`[data-track-row-key="${rowKey}"]`);
+      if (track) {
+        track.scrollLeft = Number(scrollLeft || 0);
+      }
+    });
+
+    const maxScrollTop = Math.max(0, Number(viewport.scrollHeight || 0) - Number(viewport.clientHeight || 0));
+    viewport.scrollTop = Math.max(0, Math.min(maxScrollTop, Number(focusState.mainScrollTop || 0)));
+    return true;
+  },
+
+  restoreSidebarFocusState(focusState) {
+    if (!focusState || !this.container) {
+      return false;
+    }
+    const desiredAction = String(focusState.sidebarAction || "");
+    let target = null;
+
+    if (this.layoutPrefs?.modernSidebar) {
+      this.sidebarExpanded = Boolean(focusState.sidebarExpanded);
+      setModernSidebarExpanded(this.container, this.sidebarExpanded);
+      if (this.sidebarExpanded && desiredAction) {
+        target = this.container.querySelector(`.modern-sidebar-panel .focusable[data-action="${desiredAction}"]`);
+      }
+      if (!target && this.sidebarExpanded) {
+        target = getModernSidebarSelectedNode(this.container);
+      }
+      if (!target && desiredAction === "expandSidebar") {
+        target = this.container.querySelector(".modern-sidebar-pill[data-action='expandSidebar']");
+      }
+      if (!target) {
+        target = this.container.querySelector(".modern-sidebar-pill[data-action='expandSidebar']");
+      }
+    } else {
+      setLegacySidebarExpanded(this.container, true);
+      if (desiredAction) {
+        target = this.container.querySelector(`.home-sidebar .focusable[data-action="${desiredAction}"]`);
+      }
+      if (!target) {
+        target = getLegacySidebarSelectedNode(this.container);
+      }
+    }
+
+    if (!target) {
+      return false;
+    }
+
+    this.container.querySelectorAll(".focusable.focused").forEach((node) => node.classList.remove("focused"));
+    target.classList.add("focused");
+    this.focusWithoutAutoScroll(target);
+    return true;
   },
 
   restoreModernFocusState(focusState) {
@@ -1759,6 +2026,9 @@ export const HomeScreen = {
     if (this.layoutMode !== "modern") {
       return false;
     }
+    if (this.hasOpenHoldMenu()) {
+      return true;
+    }
     if (this.modernCameraFollowTimer) {
       return true;
     }
@@ -1916,7 +2186,7 @@ export const HomeScreen = {
   },
 
   shouldSuppressAutomaticTrailerPlayback() {
-    return this.isLegacyTvRuntime();
+    return false;
   },
 
   getFocusedPosterTrailerDelayMs() {
@@ -1934,9 +2204,7 @@ export const HomeScreen = {
   },
 
   getRowItemLimit() {
-    return this.isPerformanceConstrained()
-      ? HOME_MAX_ITEMS_PER_ROW_CONSTRAINED
-      : HOME_MAX_ITEMS_PER_ROW_DEFAULT;
+    return HOME_ITEMS_BEFORE_SEE_ALL;
   },
 
   getLoadingRowItemCount() {
@@ -1945,12 +2213,94 @@ export const HomeScreen = {
       : HOME_LOADING_ROW_ITEMS_DEFAULT;
   },
 
+  shouldWindowHomeRows() {
+    return this.isPerformanceConstrained();
+  },
+
+  getInitialVisibleHomeRowCount() {
+    return this.shouldWindowHomeRows()
+      ? HOME_VISIBLE_ROWS_CONSTRAINED_INITIAL
+      : Number.MAX_SAFE_INTEGER;
+  },
+
+  getVisibleHomeRows(rows = []) {
+    const catalogRows = Array.isArray(rows) ? rows : [];
+    if (!this.shouldWindowHomeRows()) {
+      return catalogRows;
+    }
+    const requestedCount = Number.isFinite(this.visibleHomeRowCount)
+      ? Number(this.visibleHomeRowCount)
+      : this.getInitialVisibleHomeRowCount();
+    const count = Math.max(1, Math.min(catalogRows.length, requestedCount));
+    return catalogRows.slice(0, count);
+  },
+
+  ensureVisibleHomeRowsIncludeFocusState(focusState = null) {
+    if (!this.shouldWindowHomeRows() || !focusState?.rowKey || !Array.isArray(this.rows)) {
+      return;
+    }
+    const rowIndex = this.rows.findIndex((row) => buildModernRowKey(row) === focusState.rowKey);
+    if (rowIndex < 0) {
+      return;
+    }
+    const requiredCount = rowIndex + 1;
+    if (!Number.isFinite(this.visibleHomeRowCount) || this.visibleHomeRowCount < requiredCount) {
+      this.visibleHomeRowCount = requiredCount;
+    }
+  },
+
+  revealMoreHomeRowsFromFocus(current, row, col) {
+    if (!this.shouldWindowHomeRows() || !Array.isArray(this.rows)) {
+      return false;
+    }
+    const currentCount = Number.isFinite(this.visibleHomeRowCount)
+      ? Number(this.visibleHomeRowCount)
+      : this.getInitialVisibleHomeRowCount();
+    if (currentCount >= this.rows.length) {
+      return false;
+    }
+    this.pendingHomeRevealFocus = {
+      rowIndex: Math.max(0, Number(row || 0) + 1),
+      colIndex: Math.max(0, Number(col || 0))
+    };
+    this.visibleHomeRowCount = Math.min(
+      this.rows.length,
+      currentCount + HOME_VISIBLE_ROWS_CONSTRAINED_INCREMENT
+    );
+    this.render();
+    return true;
+  },
+
+  applyPendingHomeRevealFocus() {
+    const pending = this.pendingHomeRevealFocus;
+    this.pendingHomeRevealFocus = null;
+    if (!pending || !this.navModel?.rows?.length) {
+      return false;
+    }
+    const rowIndex = Math.max(0, Math.min(this.navModel.rows.length - 1, Number(pending.rowIndex || 0)));
+    const rowNodes = this.navModel.rows[rowIndex] || [];
+    const target = this.resolvePreferredNodeForRow(rowNodes, Number(pending.colIndex || 0));
+    if (!(target instanceof HTMLElement)) {
+      return false;
+    }
+    this.container.querySelectorAll(".focusable.focused").forEach((node) => node.classList.remove("focused"));
+    target.classList.add("focused");
+    this.focusWithoutAutoScroll(target);
+    this.lastMainFocus = target;
+    this.rememberMainRowFocus(target);
+    this.ensureTrackHorizontalVisibility(target, "down");
+    this.ensureMainVerticalVisibility(target, "down");
+    this.scheduleModernHeroUpdate(target);
+    this.scheduleFocusedPosterFlow(target);
+    return true;
+  },
+
   getInitialCatalogLoadCount() {
     if (this.isPerformanceConstrained()) {
       if (this.isLegacyTvRuntime()) {
-        return 4;
+        return 3;
       }
-      return 5;
+      return 4;
     }
     if (Platform.isWebOS()) {
       const webOsMajor = Number(Platform.getWebOsMajorVersion?.() || 0);
@@ -1967,7 +2317,7 @@ export const HomeScreen = {
 
   getDeferredCatalogBatchSize() {
     if (this.isPerformanceConstrained()) {
-      return 4;
+      return 3;
     }
     if (Platform.isWebOS()) {
       const webOsMajor = Number(Platform.getWebOsMajorVersion?.() || 0);
@@ -1982,6 +2332,255 @@ export const HomeScreen = {
     return 0;
   },
 
+  getBootCatalogBatchSize() {
+    const deferredBatchSize = Number(this.getDeferredCatalogBatchSize() || 0);
+    if (deferredBatchSize > 0) {
+      return deferredBatchSize;
+    }
+    return this.isPerformanceConstrained() ? 3 : 8;
+  },
+
+  async resolveContinueWatchingState({
+    allProgressPromise,
+    recentProgressPromise,
+    progressAllError = null,
+    recentProgressError = null,
+    preserveContinueWatching = false,
+    previousContinueWatchingSignature = "",
+    metaTimeoutMs = CW_META_TIMEOUT_MS,
+    nextUpMetaTimeoutMs = CW_NEXT_UP_META_TIMEOUT_MS,
+    keepLoadingWhenUnresolved = false
+  } = {}) {
+    const [allProgress, continueWatching] = await Promise.all([
+      allProgressPromise || Promise.resolve([]),
+      recentProgressPromise || Promise.resolve([])
+    ]);
+    const normalizedAllProgress = Array.isArray(allProgress) ? allProgress : [];
+    const normalizedContinueWatching = Array.isArray(continueWatching) ? continueWatching : [];
+    const watchedItems = await watchedItemsRepository.getAll(2000).catch(() => []);
+    const dismissedNextUpKeys = ContinueWatchingPreferences.getDismissedNextUpKeys();
+    const showUnairedNextUp = LayoutPreferences.get().showUnairedNextUp !== false;
+    const nextUpProgressCandidates = this.selectNextUpProgressCandidates(normalizedAllProgress, normalizedContinueWatching, watchedItems, dismissedNextUpKeys)
+      .slice(0, CW_MAX_NEXT_UP_LOOKUPS);
+    const shouldShowLoading = Boolean(normalizedContinueWatching.length + nextUpProgressCandidates.length);
+
+    if (!shouldShowLoading) {
+      if (preserveContinueWatching && (progressAllError || recentProgressError)) {
+        return {
+          allProgress: normalizedAllProgress,
+          continueWatching: normalizedContinueWatching,
+          watchedItems,
+          dismissedNextUpKeys,
+          showUnairedNextUp,
+          nextUpProgressCandidates,
+          continueWatchingDisplay: this.continueWatchingDisplay || [],
+          continueWatchingLoading: false,
+          preserveExistingDisplay: true
+        };
+      }
+      return {
+        allProgress: normalizedAllProgress,
+        continueWatching: normalizedContinueWatching,
+        watchedItems,
+        dismissedNextUpKeys,
+        showUnairedNextUp,
+        nextUpProgressCandidates,
+        continueWatchingDisplay: [],
+        continueWatchingLoading: false
+      };
+    }
+
+    const enriched = await this.enrichContinueWatching(normalizedContinueWatching, {
+      allProgress: normalizedAllProgress,
+      watchedItems,
+      dismissedNextUpKeys,
+      showUnairedNextUp,
+      nextUpProgressCandidates,
+      metaTimeoutMs,
+      nextUpMetaTimeoutMs
+    });
+    const nextDisplayStrict = buildVisibleContinueWatchingItems(enriched, { requireArtwork: true });
+    const nextDisplay = nextDisplayStrict.length
+      ? nextDisplayStrict
+      : buildVisibleContinueWatchingItems(enriched, { requireArtwork: false });
+    const unresolvedWithProgress = shouldShowLoading && !nextDisplay.length;
+    const nextSignature = preserveContinueWatching
+      ? buildContinueWatchingSignature(nextDisplay)
+      : "";
+
+    return {
+      allProgress: normalizedAllProgress,
+      continueWatching: normalizedContinueWatching,
+      watchedItems,
+      dismissedNextUpKeys,
+      showUnairedNextUp,
+      nextUpProgressCandidates,
+      continueWatchingDisplay: preserveContinueWatching && nextSignature === previousContinueWatchingSignature
+        ? (this.continueWatchingDisplay || [])
+        : nextDisplay,
+      continueWatchingLoading: Boolean(keepLoadingWhenUnresolved && unresolvedWithProgress),
+      preserveExistingDisplay: Boolean(preserveContinueWatching && nextSignature === previousContinueWatchingSignature),
+      needsContinueWatchingRetry: Boolean(unresolvedWithProgress)
+    };
+  },
+
+  applyContinueWatchingState(state = {}) {
+    this.allProgress = Array.isArray(state.allProgress) ? state.allProgress : [];
+    this.continueWatching = Array.isArray(state.continueWatching) ? state.continueWatching : [];
+    this.watchedItems = Array.isArray(state.watchedItems) ? state.watchedItems : [];
+    this.dismissedNextUpKeys = Array.isArray(state.dismissedNextUpKeys) ? state.dismissedNextUpKeys : [];
+    this.showUnairedNextUp = state.showUnairedNextUp !== false;
+    this.nextUpProgressCandidates = Array.isArray(state.nextUpProgressCandidates) ? state.nextUpProgressCandidates : [];
+    this.continueWatchingDisplay = Array.isArray(state.continueWatchingDisplay) ? state.continueWatchingDisplay : [];
+    this.continueWatchingLoading = Boolean(state.continueWatchingLoading);
+    this.needsContinueWatchingRetry = Boolean(state.needsContinueWatchingRetry);
+  },
+
+  retryContinueWatchingState({
+    token,
+    allProgressPromise,
+    recentProgressPromise,
+    progressAllError = null,
+    recentProgressError = null,
+    preserveContinueWatching = false,
+    previousContinueWatchingSignature = "",
+    background = false
+  } = {}) {
+    if (!this.needsContinueWatchingRetry || this.continueWatchingRetryInFlight) {
+      return;
+    }
+
+    const retryPromise = this.resolveContinueWatchingState({
+      allProgressPromise,
+      recentProgressPromise,
+      progressAllError,
+      recentProgressError,
+      preserveContinueWatching,
+      previousContinueWatchingSignature,
+      metaTimeoutMs: CW_BACKGROUND_META_TIMEOUT_MS,
+      nextUpMetaTimeoutMs: CW_BACKGROUND_NEXT_UP_META_TIMEOUT_MS,
+      keepLoadingWhenUnresolved: false
+    });
+    this.continueWatchingRetryInFlight = retryPromise;
+    retryPromise.then((state) => {
+      if (token !== this.homeLoadToken || Router.getCurrent() !== "home" || !state) {
+        return;
+      }
+      const previousDisplaySignature = buildContinueWatchingSignature(this.continueWatchingDisplay);
+      const previousHeroIdentity = buildHeroIdentity(this.heroItem);
+      const previousLoadingState = Boolean(this.continueWatchingLoading);
+      this.applyContinueWatchingState(state);
+      if (this.layoutMode === "modern" && this.continueWatchingDisplay.length) {
+        this.heroItem = this.pickInitialHero();
+        if (!background && !this.hasAppliedInitialContinueWatchingFocus) {
+          this.forceInitialContinueWatchingFocus = true;
+        }
+      }
+      const nextDisplaySignature = buildContinueWatchingSignature(this.continueWatchingDisplay);
+      const nextHeroIdentity = buildHeroIdentity(this.heroItem);
+      if (previousLoadingState !== this.continueWatchingLoading
+        || previousDisplaySignature !== nextDisplaySignature
+        || previousHeroIdentity !== nextHeroIdentity) {
+        this.requestBackgroundRender();
+      }
+    }).catch((error) => {
+      console.warn("Continue watching retry failed", error);
+      if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
+        return;
+      }
+      this.continueWatchingLoading = false;
+      this.requestBackgroundRender();
+    }).finally(() => {
+      if (this.continueWatchingRetryInFlight === retryPromise) {
+        this.continueWatchingRetryInFlight = null;
+      }
+    });
+  },
+
+  collectBootImageUrls() {
+    const urls = [];
+    const pushUrl = (value) => {
+      const url = String(value || "").trim();
+      if (url && !urls.includes(url)) {
+        urls.push(url);
+      }
+    };
+    const pushItemImages = (item = {}) => {
+      const source = item && typeof item === "object" ? item : {};
+      pushUrl(source.backdrop);
+      pushUrl(source.background);
+      pushUrl(source.landscapePoster);
+      pushUrl(source.poster);
+      pushUrl(source.thumbnail);
+      pushUrl(source.episodeThumbnail);
+      pushUrl(source.logo);
+    };
+
+    pushItemImages(normalizeCatalogItem(this.heroItem || null));
+    (this.continueWatchingDisplay || []).slice(0, CW_MAX_VISIBLE_ITEMS).forEach((item) => {
+      pushItemImages(normalizeContinueWatchingItem(item));
+    });
+    this.getVisibleHomeRows(this.rows || []).slice(0, this.getInitialVisibleHomeRowCount()).forEach((row) => {
+      (row?.result?.data?.items || []).slice(0, this.getRowItemLimit()).forEach((item) => {
+        pushItemImages(normalizeCatalogItem(item, row?.type || "movie"));
+      });
+    });
+    return urls.slice(0, this.isPerformanceConstrained() ? HOME_IMAGE_PRELOAD_LIMIT_CONSTRAINED : HOME_IMAGE_PRELOAD_LIMIT);
+  },
+
+  async prewarmCachedHomeImages(deadlineMs = 0) {
+    const budgetMs = Math.min(
+      HOME_CACHED_IMAGE_PREWARM_MAX_MS,
+      Math.max(0, remainingBudgetMs(deadlineMs))
+    );
+    if (budgetMs < HOME_CACHED_IMAGE_PREWARM_MIN_MS) {
+      return;
+    }
+    const urls = HomeImageCacheStore.getUrls(this.isPerformanceConstrained() ? 60 : 160);
+    if (!urls.length) {
+      return;
+    }
+    await withTimeout(
+      preloadHomeImageUrls(urls, {
+        limit: this.isPerformanceConstrained() ? 36 : 90,
+        remember: false
+      }),
+      budgetMs,
+      null
+    );
+  },
+
+  async preloadBootImages(deadlineMs = 0) {
+    const budgetMs = Math.min(
+      HOME_BOOT_IMAGE_PRELOAD_MAX_MS,
+      Math.max(0, remainingBudgetMs(deadlineMs))
+    );
+    if (budgetMs < HOME_BOOT_IMAGE_PRELOAD_MIN_MS) {
+      return;
+    }
+    const urls = this.collectBootImageUrls();
+    if (!urls.length) {
+      return;
+    }
+    await withTimeout(
+      preloadHomeImageUrls(urls, {
+        limit: this.isPerformanceConstrained() ? HOME_IMAGE_PRELOAD_LIMIT_CONSTRAINED : HOME_IMAGE_PRELOAD_LIMIT
+      }),
+      budgetMs,
+      null
+    );
+  },
+
+  preloadCurrentHomeImages() {
+    const urls = this.collectBootImageUrls();
+    if (!urls.length) {
+      return;
+    }
+    void preloadHomeImageUrls(urls, {
+      limit: this.isPerformanceConstrained() ? HOME_IMAGE_PRELOAD_LIMIT_CONSTRAINED : HOME_IMAGE_PRELOAD_LIMIT
+    });
+  },
+
   getScrollDuration(base) {
     const baseline = Number.isFinite(base) ? base : 150;
     if (this.isLegacyTvRuntime()) {
@@ -1994,13 +2593,19 @@ export const HomeScreen = {
   },
 
   getBackgroundRenderDelay() {
+    const focusedNode = this.container?.querySelector?.(".focusable.focused") || null;
+    const sidebarFocused = Boolean(focusedNode && this.isSidebarNode(focusedNode));
     if (this.isLegacyTvRuntime()) {
-      return HOME_BACKGROUND_RENDER_DELAY_LEGACY_MS;
+      return sidebarFocused
+        ? HOME_BACKGROUND_RENDER_DELAY_LEGACY_MS + 80
+        : HOME_BACKGROUND_RENDER_DELAY_LEGACY_MS;
     }
     if (this.isPerformanceConstrained()) {
-      return HOME_BACKGROUND_RENDER_DELAY_MS;
+      return sidebarFocused
+        ? HOME_BACKGROUND_RENDER_DELAY_MS + 80
+        : HOME_BACKGROUND_RENDER_DELAY_MS;
     }
-    return 0;
+    return sidebarFocused ? 40 : 0;
   },
 
   shouldProgressivelyRenderDeferredRows() {
@@ -2287,6 +2892,52 @@ export const HomeScreen = {
     focusWithoutAutoScroll(target);
   },
 
+  patchSidebarProfileDom(profile = null) {
+    if (!this.container || !profile) {
+      return false;
+    }
+    let updated = false;
+    const profileName = String(profile.activeProfileName || t("sidebar.profileFallback")).trim() || t("sidebar.profileFallback");
+    const profileInitial = String(profile.activeProfileInitial || "P").trim() || "P";
+    const profileColor = String(profile.activeProfileColorHex || DEFAULT_PROFILE_COLOR).trim() || DEFAULT_PROFILE_COLOR;
+    const profileAvatarUrl = String(profile.activeProfileAvatarUrl || "").trim();
+
+    this.container.querySelectorAll(".home-profile-name, .modern-sidebar-profile-name").forEach((node) => {
+      if (node.textContent !== profileName) {
+        node.textContent = profileName;
+        updated = true;
+      }
+    });
+
+    this.container.querySelectorAll(".home-profile-avatar, .modern-sidebar-profile-avatar").forEach((node) => {
+      if (node.style.background !== profileColor) {
+        node.style.background = profileColor;
+        updated = true;
+      }
+      const existingImage = node.querySelector(".sidebar-profile-avatar-image");
+      if (profileAvatarUrl) {
+        if (existingImage) {
+          if (existingImage.getAttribute("src") !== profileAvatarUrl) {
+            existingImage.setAttribute("src", profileAvatarUrl);
+            existingImage.setAttribute("alt", profileName);
+            updated = true;
+          }
+        } else {
+          node.innerHTML = `<img class="sidebar-profile-avatar-image" src="${escapeAttribute(profileAvatarUrl)}" alt="${escapeAttribute(profileName)}" />`;
+          updated = true;
+        }
+      } else if (existingImage) {
+        node.textContent = profileInitial;
+        updated = true;
+      } else if (node.textContent !== profileInitial) {
+        node.textContent = profileInitial;
+        updated = true;
+      }
+    });
+
+    return updated;
+  },
+
   getInitialFocusSelector() {
     if (this.layoutMode === "grid") {
       return ".home-main .home-hero-card.focusable, .home-main .home-continue-card.focusable, .home-main .home-grid-track .home-content-card.focusable";
@@ -2326,6 +2977,237 @@ export const HomeScreen = {
     return normalizeContinueWatchingItem(this.continueWatchingDisplay?.[index] || this.continueWatching?.[index] || null);
   },
 
+  getPosterMenuItemFromNode(node) {
+    if (!node?.matches?.(".home-poster-card.focusable[data-action='openDetail']")) {
+      return null;
+    }
+    const rowIndex = Number(node.dataset.rowIndex ?? -1);
+    const itemIndex = Number(node.dataset.itemIndex ?? -1);
+    if (Number.isFinite(rowIndex) && Number.isFinite(itemIndex) && rowIndex >= 0 && itemIndex >= 0) {
+      const row = this.rows?.[rowIndex] || null;
+      const item = row?.result?.data?.items?.[itemIndex] || null;
+      return normalizeCatalogItem(item, row?.type || node.dataset.itemType || "movie");
+    }
+    return normalizeCatalogItem({
+      id: node.dataset.itemId || "",
+      type: node.dataset.itemType || "movie",
+      name: node.dataset.itemTitle || "Untitled",
+      poster: node.dataset.posterSrc || "",
+      background: node.dataset.backdropSrc || "",
+      logo: node.dataset.logoSrc || ""
+    }, node.dataset.itemType || "movie");
+  },
+
+  getPosterHoldMenuItem() {
+    const menu = this.posterHoldMenu;
+    if (!menu) {
+      return null;
+    }
+    const row = this.rows?.[Number(menu.rowIndex ?? -1)] || null;
+    const item = row?.result?.data?.items?.[Number(menu.itemIndex ?? -1)] || null;
+    return normalizeCatalogItem(item, row?.type || menu.item?.type || "movie")
+      || normalizeCatalogItem(menu.item, menu.item?.type || "movie");
+  },
+
+  isPosterHoldItemWatched(item) {
+    const contentId = String(item?.id || item?.contentId || "");
+    if (!contentId) {
+      return false;
+    }
+    return Boolean((this.watchedItems || []).some((entry) => String(entry?.contentId || "") === contentId));
+  },
+
+  getPosterHoldMenuOptions() {
+    const item = this.getPosterHoldMenuItem();
+    if (!item?.id) {
+      return [];
+    }
+    const watched = this.isPosterHoldItemWatched(item);
+    const isMovie = !isSeriesTypeForContinueWatching(item.type);
+    const options = [
+      { action: "details", label: t("cw_action_go_to_details", {}, "Go to details") },
+      {
+        action: "toggleLibrary",
+        label: this.posterHoldMenu?.isSaved
+          ? t("detail.removeFromLibrary", {}, "Remove from Library")
+          : t("detail.addToLibrary", {}, "Add to Library")
+      }
+    ];
+    if (isMovie) {
+      options.push({
+        action: "toggleWatched",
+        label: watched ? t("hero_mark_unwatched", {}, "Mark as unwatched") : t("hero_mark_watched", {}, "Mark as watched")
+      });
+    }
+    return options;
+  },
+
+  renderPosterHoldMenu() {
+    const item = this.getPosterHoldMenuItem();
+    if (!item?.id) {
+      return "";
+    }
+    return renderHoldMenuMarkup({
+      kicker: "",
+      title: item.name || item.title || "Untitled",
+      subtitle: t("home_poster_dialog_subtitle", {}, "Choose what you want to do with this title."),
+      focusedIndex: Number(this.posterHoldMenu?.optionIndex || 0),
+      options: this.getPosterHoldMenuOptions()
+    });
+  },
+
+  applyPosterHoldMenuFocus() {
+    const buttons = Array.from(this.container?.querySelectorAll(".hold-menu-button.focusable") || []);
+    if (!buttons.length) {
+      return false;
+    }
+    this.container?.querySelectorAll(".focusable.focused").forEach((node) => {
+      if (!node.classList.contains("hold-menu-button")) {
+        node.classList.remove("focused");
+      }
+    });
+    const currentIndex = Math.max(0, Math.min(buttons.length - 1, Number(this.posterHoldMenu?.optionIndex || 0)));
+    buttons.forEach((node, index) => node.classList.toggle("focused", index === currentIndex));
+    const target = buttons[currentIndex] || buttons[0] || null;
+    if (!target) {
+      return false;
+    }
+    target.classList.add("focused");
+    this.focusWithoutAutoScroll(target);
+    return true;
+  },
+
+  movePosterHoldMenuFocus(delta) {
+    if (!this.posterHoldMenu) {
+      return false;
+    }
+    const options = this.getPosterHoldMenuOptions();
+    if (!options.length) {
+      return false;
+    }
+    this.posterHoldMenu = {
+      ...this.posterHoldMenu,
+      optionIndex: Math.max(0, Math.min(options.length - 1, Number(this.posterHoldMenu.optionIndex || 0) + delta))
+    };
+    this.applyPosterHoldMenuFocus();
+    return true;
+  },
+
+  async openPosterHoldMenu(node) {
+    const item = this.getPosterMenuItemFromNode(node);
+    if (!item?.id) {
+      return false;
+    }
+    const backgroundFocusState = this.captureCurrentFocusState();
+    this.cancelPendingPosterEnter();
+    this.cancelPendingPosterHold();
+    this.posterHoldMenu = {
+      rowIndex: Number(node?.dataset?.rowIndex ?? -1),
+      itemIndex: Number(node?.dataset?.itemIndex ?? -1),
+      item,
+      isSaved: await savedLibraryRepository.isSaved(item.id),
+      optionIndex: 0,
+      backgroundFocusState
+    };
+    this.armHoldMenuBackTrap();
+    this.suppressHoldMenuEnterUntilKeyUp = true;
+    this.render();
+    return true;
+  },
+
+  closePosterHoldMenu() {
+    if (!this.posterHoldMenu) {
+      return false;
+    }
+    this.pendingPosterFocus = {
+      rowIndex: Number(this.posterHoldMenu.rowIndex ?? -1),
+      itemIndex: Number(this.posterHoldMenu.itemIndex ?? -1)
+    };
+    this.posterHoldMenu = null;
+    this.releaseHoldMenuBackTrap();
+    this.render();
+    return true;
+  },
+
+  armHoldMenuBackTrap() {
+    if (this.holdMenuBackTrapArmed) {
+      return;
+    }
+    if (!window?.history || typeof window.history.pushState !== "function") {
+      return;
+    }
+    const route = Router.getCurrent?.() || "home";
+    if (route !== "home") {
+      return;
+    }
+    try {
+      window.history.pushState({
+        route: "home",
+        params: Router.currentParams || {},
+        homeHoldMenuBackTrap: true
+      }, "");
+      this.holdMenuBackTrapArmed = true;
+    } catch (error) {
+      console.warn("Failed to arm home hold menu back trap", error);
+    }
+  },
+
+  releaseHoldMenuBackTrap() {
+    const shouldPruneCurrentHistoryEntry = Boolean(
+      this.holdMenuBackTrapArmed
+      && window?.history
+      && typeof window.history.back === "function"
+      && window.history.state?.homeHoldMenuBackTrap === true
+    );
+    this.holdMenuBackTrapArmed = false;
+    if (!shouldPruneCurrentHistoryEntry) {
+      return;
+    }
+    try {
+      Router.ignoreSinglePopstate?.();
+      window.history.back();
+    } catch (error) {
+      console.warn("Failed to release home hold menu back trap", error);
+    }
+  },
+
+  hasOpenHoldMenu() {
+    return Boolean(
+      this.posterHoldMenu
+      || this.continueWatchingMenu
+      || this.container?.querySelector?.(".hold-menu")
+      || document.querySelector("#home .hold-menu")
+    );
+  },
+
+  closeOpenHoldMenu() {
+    const hadDomMenu = Boolean(this.container?.querySelector?.(".hold-menu") || document.querySelector("#home .hold-menu"));
+    if (this.posterHoldMenu) {
+      const closed = this.closePosterHoldMenu();
+      if (closed) {
+        this.suppressHomeExitUntil = Date.now() + 700;
+      }
+      return closed;
+    }
+    if (this.continueWatchingMenu) {
+      const closed = this.closeContinueWatchingMenu();
+      if (closed) {
+        this.suppressHomeExitUntil = Date.now() + 700;
+      }
+      return closed;
+    }
+    if (hadDomMenu) {
+      this.posterHoldMenu = null;
+      this.continueWatchingMenu = null;
+      this.releaseHoldMenuBackTrap();
+      this.suppressHoldMenuEnterUntilKeyUp = false;
+      this.render();
+      this.suppressHomeExitUntil = Date.now() + 700;
+      return true;
+    }
+    return false;
+  },
+
   getContinueWatchingMenuItem() {
     const menu = this.continueWatchingMenu;
     if (!menu) {
@@ -2354,14 +3236,15 @@ export const HomeScreen = {
     if (!item) {
       return [];
     }
-    const watched = this.isContinueWatchingItemWatched(item);
-    return [
-      { action: "resume", label: t("common.resume", {}, "Resume") },
-      { action: "startOver", label: t("common.startOver", {}, "Start Over") },
-      { action: "details", label: t("common.viewDetails", {}, "View Details") },
-      { action: "toggleWatched", label: watched ? t("common.markUnwatched", {}, "Mark Unwatched") : t("common.markWatched", {}, "Mark Watched") },
-      { action: "remove", label: t("home.removeContinueWatching", {}, "Remove from Continue Watching") }
+    const options = [
+      { action: "details", label: t("cw_action_go_to_details", {}, "Go to details") },
+      { action: "playManually", label: t("play_manually", {}, "Play manually") }
     ];
+    if (!item.isNextUp) {
+      options.push({ action: "startOver", label: t("cw_action_start_from_beginning", {}, "Start from beginning") });
+    }
+    options.push({ action: "remove", label: t("cw_action_remove", {}, "Remove") });
+    return options;
   },
 
   renderContinueWatchingMenu() {
@@ -2372,9 +3255,9 @@ export const HomeScreen = {
     const options = this.getContinueWatchingMenuOptions();
     const subtitle = firstNonEmpty(item.episodeCode, item.episodeTitle, item.releaseInfo, toTitleCase(item.type));
     return renderHoldMenuMarkup({
-      kicker: t("home.continueWatching", {}, "Continue Watching"),
+      kicker: "",
       title: item.title || "Untitled",
-      subtitle,
+      subtitle: t("cw_dialog_subtitle", {}, subtitle || "Choose what you want to do with this item."),
       focusedIndex: Number(this.continueWatchingMenu?.optionIndex || 0),
       options: options.map((option) => ({
         ...option,
@@ -2431,8 +3314,11 @@ export const HomeScreen = {
       videoId: item.videoId || "",
       index: Number(node?.dataset?.cwIndex || 0),
       optionIndex: 0,
-      item
+      item,
+      backgroundFocusState: this.captureCurrentFocusState()
     };
+    this.armHoldMenuBackTrap();
+    this.suppressHoldMenuEnterUntilKeyUp = true;
     this.render();
     return true;
   },
@@ -2443,6 +3329,7 @@ export const HomeScreen = {
     }
     this.pendingContinueWatchingFocusIndex = Math.max(0, Number(this.continueWatchingMenu.index || 0));
     this.continueWatchingMenu = null;
+    this.releaseHoldMenuBackTrap();
     this.render();
     return true;
   },
@@ -2525,6 +3412,102 @@ export const HomeScreen = {
     return true;
   },
 
+  cancelPendingPosterEnter() {
+    if (this.pendingPosterEnterTimer) {
+      clearTimeout(this.pendingPosterEnterTimer);
+      this.pendingPosterEnterTimer = null;
+    }
+    this.pendingPosterEnterTarget = null;
+  },
+
+  isPosterHoldTarget(node) {
+    return Boolean(node?.matches?.(".home-poster-card.focusable[data-action='openDetail']"));
+  },
+
+  cancelPendingPosterHold() {
+    if (this.pendingPosterHoldTimer) {
+      clearTimeout(this.pendingPosterHoldTimer);
+      this.pendingPosterHoldTimer = null;
+    }
+    this.pendingPosterHoldTarget = null;
+  },
+
+  hasPendingPosterHold(node) {
+    const pending = this.pendingPosterHoldTarget;
+    if (!pending || !node) {
+      return false;
+    }
+    return String(node.dataset.itemId || "") === String(pending.itemId || "");
+  },
+
+  startPendingPosterHold(node) {
+    const item = this.getPosterMenuItemFromNode(node);
+    if (!item?.id) {
+      return false;
+    }
+    this.cancelPendingPosterEnter();
+    this.cancelPendingPosterHold();
+    this.pendingPosterHoldTarget = {
+      itemId: String(item.id || ""),
+      holdTriggered: false
+    };
+    this.pendingPosterHoldTimer = setTimeout(() => {
+      this.pendingPosterHoldTimer = null;
+      const pending = this.pendingPosterHoldTarget;
+      if (!pending || Router.getCurrent() !== "home") {
+        return;
+      }
+      const current = this.container?.querySelector(".home-poster-card.focusable.focused[data-action='openDetail']") || null;
+      if (!this.hasPendingPosterHold(current)) {
+        return;
+      }
+      pending.holdTriggered = true;
+      void this.openPosterHoldMenu(current);
+    }, CW_HOLD_DELAY_MS);
+    return true;
+  },
+
+  completePendingPosterHold(node) {
+    const pending = this.pendingPosterHoldTarget;
+    if (!pending) {
+      return false;
+    }
+    const holdTriggered = Boolean(pending.holdTriggered);
+    this.cancelPendingPosterHold();
+    if (holdTriggered) {
+      return true;
+    }
+    if (!this.isPosterHoldTarget(node)) {
+      return false;
+    }
+    this.openDetailFromNode(node);
+    return true;
+  },
+
+  schedulePosterEnter(node) {
+    if (!this.isPosterHoldTarget(node)) {
+      return false;
+    }
+    this.cancelPendingPosterEnter();
+    this.pendingPosterEnterTarget = {
+      itemId: String(node.dataset.itemId || "")
+    };
+    this.pendingPosterEnterTimer = setTimeout(() => {
+      this.pendingPosterEnterTimer = null;
+      const pending = this.pendingPosterEnterTarget;
+      this.pendingPosterEnterTarget = null;
+      if (!pending || Router.getCurrent() !== "home") {
+        return;
+      }
+      const current = this.container?.querySelector(".home-poster-card.focusable.focused[data-action='openDetail']") || null;
+      if (String(current?.dataset?.itemId || "") !== String(pending.itemId || "")) {
+        return;
+      }
+      this.openDetailFromNode(current);
+    }, CW_ENTER_DELAY_MS);
+    return true;
+  },
+
   scheduleContinueWatchingEnter(node) {
     const item = this.getContinueWatchingItemFromNode(node);
     if (!item?.contentId) {
@@ -2564,6 +3547,7 @@ export const HomeScreen = {
     const normalized = normalizeContinueWatchingItem(item);
     this.cancelPendingContinueWatchingEnter();
     this.continueWatchingMenu = null;
+    this.releaseHoldMenuBackTrap();
 
     Router.navigate("detail", {
       itemId: normalized.contentId,
@@ -2586,10 +3570,31 @@ export const HomeScreen = {
     }
     this.cancelPendingContinueWatchingEnter();
     this.continueWatchingMenu = null;
+    this.releaseHoldMenuBackTrap();
     Router.navigate("detail", {
       itemId: normalized.contentId,
       itemType: normalized.type || "movie",
-      fallbackTitle: normalized.title || normalized.contentId || "Untitled"
+      fallbackTitle: normalized.title || normalized.contentId || "Untitled",
+      resumeVideoId: normalized.videoId || null,
+      resumeSeason: normalized.season ?? null,
+      resumeEpisode: normalized.episode ?? null
+    });
+    return true;
+  },
+
+  openContinueWatchingManualStreamSelection(item) {
+    const params = continueWatchingStreamParams(item);
+    if (!params) {
+      return false;
+    }
+    this.cancelPendingContinueWatchingEnter();
+    this.continueWatchingMenu = null;
+    this.releaseHoldMenuBackTrap();
+    Router.navigate("stream", {
+      ...params,
+      returnToDetail: true,
+      continueWatchingBackHome: true,
+      returnHomeOnBack: true
     });
     return true;
   },
@@ -2598,12 +3603,23 @@ export const HomeScreen = {
     const normalized = normalizeContinueWatchingItem(item);
     const contentId = String(normalized?.contentId || "");
     const videoId = String(normalized?.videoId || "");
+    const nextUpKey = normalized?.isNextUp
+      ? nextUpDismissKey(contentId, normalized.seedSeason ?? normalized.season, normalized.seedEpisode ?? normalized.episode)
+      : "";
     if (!contentId) {
       return;
     }
     const matchesItem = (entry) => {
       if (String(entry?.contentId || "") !== contentId) {
         return false;
+      }
+      if (nextUpKey) {
+        const entryKey = nextUpDismissKey(
+          entry?.contentId,
+          entry?.seedSeason ?? entry?.season,
+          entry?.seedEpisode ?? entry?.episode
+        );
+        return entryKey === nextUpKey;
       }
       if (!videoId) {
         return true;
@@ -2671,6 +3687,15 @@ export const HomeScreen = {
     if (!normalized?.contentId) {
       return false;
     }
+    if (normalized.isNextUp) {
+      const seedSeason = normalized.seedSeason ?? normalized.season ?? null;
+      const seedEpisode = normalized.seedEpisode ?? normalized.episode ?? null;
+      const dismissKey = nextUpDismissKey(normalized.contentId, seedSeason, seedEpisode);
+      ContinueWatchingPreferences.addDismissedNextUpKey(dismissKey);
+      this.dismissedNextUpKeys = ContinueWatchingPreferences.getDismissedNextUpKeys();
+      this.pruneContinueWatchingItem(normalized);
+      return true;
+    }
     await watchProgressRepository.removeProgress(normalized.contentId, normalized.videoId || null);
     this.pruneContinueWatchingItem(normalized);
     return true;
@@ -2684,14 +3709,14 @@ export const HomeScreen = {
       return false;
     }
     const anchorIndex = Math.max(0, Number(this.continueWatchingMenu?.index || 0));
-    if (option.action === "resume") {
-      return this.openContinueWatchingFromItem(item);
+    if (option.action === "details") {
+      return this.openContinueWatchingDetails(item);
+    }
+    if (option.action === "playManually") {
+      return this.openContinueWatchingManualStreamSelection(item);
     }
     if (option.action === "startOver") {
       return this.openContinueWatchingFromItem(item, { startOver: true });
-    }
-    if (option.action === "details") {
-      return this.openContinueWatchingDetails(item);
     }
     if (option.action === "toggleWatched") {
       await this.toggleContinueWatchingWatched(item);
@@ -2701,7 +3726,100 @@ export const HomeScreen = {
       return false;
     }
     this.continueWatchingMenu = null;
+    this.releaseHoldMenuBackTrap();
     this.pendingContinueWatchingFocusIndex = anchorIndex;
+    this.render();
+    return true;
+  },
+
+  async togglePosterLibraryItem(item) {
+    const normalized = normalizeCatalogItem(item, item?.type || "movie");
+    if (!normalized?.id) {
+      return false;
+    }
+    const isSaved = await savedLibraryRepository.toggle({
+      contentId: normalized.id,
+      contentType: normalized.type || "movie",
+      title: normalized.name || normalized.title || normalized.id || "Untitled",
+      poster: normalized.poster || null,
+      background: normalized.background || normalized.backdrop || normalized.landscapePoster || null
+    });
+    if (this.posterHoldMenu) {
+      this.posterHoldMenu = {
+        ...this.posterHoldMenu,
+        isSaved: Boolean(isSaved)
+      };
+    }
+    return true;
+  },
+
+  async togglePosterWatchedItem(item) {
+    const normalized = normalizeCatalogItem(item, item?.type || "movie");
+    if (!normalized?.id) {
+      return false;
+    }
+    if (this.isPosterHoldItemWatched(normalized)) {
+      await watchedItemsRepository.unmark(normalized.id);
+      this.watchedItems = Array.isArray(this.watchedItems)
+        ? this.watchedItems.filter((entry) => String(entry?.contentId || "") !== String(normalized.id))
+        : [];
+      return true;
+    }
+    await watchedItemsRepository.mark({
+      contentId: normalized.id,
+      contentType: normalized.type || "movie",
+      title: normalized.name || normalized.title || normalized.id || "Untitled",
+      watchedAt: Date.now()
+    });
+    await watchProgressRepository.saveProgress({
+      contentId: normalized.id,
+      contentType: normalized.type || "movie",
+      videoId: null,
+      positionMs: 100,
+      durationMs: 100,
+      updatedAt: Date.now()
+    });
+    this.watchedItems = [
+      {
+        contentId: normalized.id,
+        contentType: normalized.type || "movie",
+        title: normalized.name || normalized.title || normalized.id || "Untitled",
+        watchedAt: Date.now()
+      },
+      ...(Array.isArray(this.watchedItems) ? this.watchedItems.filter((entry) => String(entry?.contentId || "") !== String(normalized.id)) : [])
+    ];
+    return true;
+  },
+
+  async activatePosterHoldMenuOption() {
+    const item = this.getPosterHoldMenuItem();
+    const options = this.getPosterHoldMenuOptions();
+    const option = options[Math.max(0, Math.min(options.length - 1, Number(this.posterHoldMenu?.optionIndex || 0)))];
+    if (!item || !option) {
+      return false;
+    }
+    const focusRestore = {
+      rowIndex: Number(this.posterHoldMenu?.rowIndex ?? -1),
+      itemIndex: Number(this.posterHoldMenu?.itemIndex ?? -1)
+    };
+    if (option.action === "details") {
+      this.posterHoldMenu = null;
+      this.releaseHoldMenuBackTrap();
+      Router.navigate("detail", {
+        itemId: item.id,
+        itemType: item.type || "movie",
+        fallbackTitle: item.name || item.title || item.id || "Untitled"
+      });
+      return true;
+    }
+    if (option.action === "toggleLibrary") {
+      await this.togglePosterLibraryItem(item);
+    } else if (option.action === "toggleWatched") {
+      await this.togglePosterWatchedItem(item);
+    } else {
+      return false;
+    }
+    this.pendingPosterFocus = focusRestore;
     this.render();
     return true;
   },
@@ -2739,6 +3857,32 @@ export const HomeScreen = {
     return this.layoutMode === "modern" && Boolean(node?.classList?.contains("home-poster-card"));
   },
 
+  collectPosterCardImageUrls(card) {
+    if (!card) {
+      return [];
+    }
+    const urls = [
+      card.dataset?.posterSrc,
+      card.dataset?.backdropSrc,
+      card.dataset?.logoSrc
+    ];
+    card.querySelectorAll(".content-poster, .home-poster-expanded-backdrop, .home-poster-expanded-logo, .home-poster-landscape-logo").forEach((node) => {
+      urls.push(node.getAttribute("src"));
+      urls.push(node.dataset?.src);
+    });
+    return normalizeImageUrls(urls);
+  },
+
+  preloadPosterCardImages(card) {
+    const urls = this.collectPosterCardImageUrls(card);
+    if (!urls.length) {
+      return;
+    }
+    void preloadHomeImageUrls(urls, {
+      limit: this.isPerformanceConstrained() ? 4 : 8
+    });
+  },
+
   hydrateFocusedPosterAssets(node, { defer = false } = {}) {
     if (!this.isModernPosterNode(node)) {
       return;
@@ -2759,6 +3903,13 @@ export const HomeScreen = {
         };
         if (src && !backdrop.getAttribute("src")) {
           backdrop.setAttribute("src", src);
+        }
+        if (src) {
+          preloadImageUrl(src).then((loaded) => {
+            if (loaded && node.isConnected && backdrop.isConnected && String(backdrop.getAttribute("src") || "") === src) {
+              markBackdropReady();
+            }
+          });
         }
         if (backdrop.complete && Number(backdrop.naturalWidth || 0) > 0) {
           markBackdropReady();
@@ -2790,6 +3941,9 @@ export const HomeScreen = {
         if (src && !logo.getAttribute("src")) {
           logo.setAttribute("src", src);
         }
+        if (src) {
+          void preloadImageUrl(src);
+        }
         logo.removeAttribute("data-src");
       }
     };
@@ -2815,6 +3969,7 @@ export const HomeScreen = {
       if (!this.isModernPosterNode(card)) {
         return;
       }
+      this.preloadPosterCardImages(card);
       const poster = card.querySelector(".content-poster");
       if (poster instanceof HTMLImageElement) {
         poster.loading = "eager";
@@ -2913,14 +4068,18 @@ export const HomeScreen = {
     }
     this.clearTrailerLayer(container);
     if (source.kind === "youtube" && source.embedUrl) {
+      suppressBackgroundTrailerMediaControls();
       const frame = document.createElement("iframe");
       frame.className = "home-inline-trailer-frame";
       frame.src = source.embedUrl;
       frame.title = "Trailer preview";
-      frame.allow = "autoplay; encrypted-media; picture-in-picture";
-      frame.allowFullscreen = true;
+      frame.allow = "autoplay; encrypted-media";
+      frame.allowFullscreen = false;
       frame.referrerPolicy = "strict-origin-when-cross-origin";
+      frame.tabIndex = -1;
+      frame.setAttribute("aria-hidden", "true");
       frame.addEventListener("load", () => {
+        suppressBackgroundTrailerMediaControls();
         container.classList.add("is-active");
         onReady?.();
       }, { once: true });
@@ -2936,6 +4095,7 @@ export const HomeScreen = {
       `;
       const video = container.querySelector("video");
       if (video) {
+        suppressBackgroundTrailerMediaControls(video);
         video.muted = shouldMute;
         video.defaultMuted = shouldMute;
         try {
@@ -2943,6 +4103,7 @@ export const HomeScreen = {
         } catch (_) {
         }
         const activate = () => {
+          suppressBackgroundTrailerMediaControls(video);
           container.classList.add("is-active");
           onReady?.();
         };
@@ -2951,6 +4112,7 @@ export const HomeScreen = {
         if (playAttempt?.catch) {
           playAttempt.catch(() => { });
         }
+        suppressBackgroundTrailerMediaControls(video);
       } else {
         container.classList.add("is-active");
         onReady?.();
@@ -3329,7 +4491,7 @@ export const HomeScreen = {
     if (this.focusedPosterFlowState?.key && this.focusedPosterFlowState.key !== flowKey) {
       this.collapseFocusedPoster();
     }
-    this.promotePosterCardAssets(node, { includeNeighbors: this.isPerformanceConstrained() });
+    this.promotePosterCardAssets(node, { includeNeighbors: true });
     const defaultDelayMs = this.isPerformanceConstrained()
       ? 0
       : Math.max(0, Number(prefs.focusedPosterBackdropExpandDelaySeconds ?? 3)) * 1000;
@@ -3904,7 +5066,7 @@ export const HomeScreen = {
       }
       this.scheduleModernHeroUpdate(target);
       if (this.isPerformanceConstrained()) {
-        this.promotePosterCardAssets(target, { includeNeighbors: true });
+        this.promotePosterCardAssets(target, { includeNeighbors: false });
       }
       this.scheduleFocusedPosterFlow(target);
     } else {
@@ -4081,6 +5243,9 @@ export const HomeScreen = {
       const targetRow = row + delta;
       const targetRowNodes = nav.rows[targetRow] || null;
       if (!targetRowNodes || !targetRowNodes.length) {
+        if (direction === "down" && this.revealMoreHomeRowsFromFocus(current, row, col)) {
+          return true;
+        }
         return true;
       }
       const target = this.resolvePreferredNodeForRow(targetRowNodes, col);
@@ -4129,11 +5294,19 @@ export const HomeScreen = {
         }
         if (target.closest(".hold-menu")) {
           const optionIndex = Number(target.dataset.holdIndex || 0);
-          this.continueWatchingMenu = {
-            ...(this.continueWatchingMenu || {}),
-            optionIndex
-          };
-          void this.activateContinueWatchingMenuOption();
+          if (this.posterHoldMenu) {
+            this.posterHoldMenu = {
+              ...this.posterHoldMenu,
+              optionIndex
+            };
+            void this.activatePosterHoldMenuOption();
+          } else {
+            this.continueWatchingMenu = {
+              ...(this.continueWatchingMenu || {}),
+              optionIndex
+            };
+            void this.activateContinueWatchingMenuOption();
+          }
           return;
         }
         const action = String(target.dataset.action || "");
@@ -4203,18 +5376,58 @@ export const HomeScreen = {
     viewport.addEventListener("scroll", this.boundHomeViewportScrollHandler, { passive: true });
   },
 
+  bindBackHandler() {
+    if (this.homeBackHandler) {
+      document.removeEventListener("keydown", this.homeBackHandler, true);
+      document.removeEventListener("keyup", this.homeBackHandler, true);
+    }
+    if (this.homeBeforeExitHandler) {
+      document.removeEventListener("nuvio:beforeExitApp", this.homeBeforeExitHandler, true);
+    }
+    this.homeBackHandler = (event) => {
+      if (!Platform.isBackEvent(event)) {
+        return;
+      }
+      if (this.closeOpenHoldMenu()) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        event.stopImmediatePropagation?.();
+        Router.suppressNextPopstate?.();
+        return;
+      }
+      if (Date.now() < Number(this.suppressHomeExitUntil || 0)) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        event.stopImmediatePropagation?.();
+        Router.suppressNextPopstate?.();
+      }
+    };
+    this.homeBeforeExitHandler = (event) => {
+      if (this.closeOpenHoldMenu() || Date.now() < Number(this.suppressHomeExitUntil || 0)) {
+        event.preventDefault?.();
+        Router.suppressNextPopstate?.();
+      }
+    };
+    document.addEventListener("keydown", this.homeBackHandler, true);
+    document.addEventListener("keyup", this.homeBackHandler, true);
+    document.addEventListener("nuvio:beforeExitApp", this.homeBeforeExitHandler, true);
+  },
+
   async mount(params = {}, navigationContext = {}) {
     this.container = document.getElementById("home");
     ScreenUtils.show(this.container);
     this.ensureDelegatedEventsBound();
+    this.bindBackHandler();
     this.sidebarExpanded = false;
     this.pillIconOnly = false;
     this.homeRouteEnterPending = true;
     this.continueWatchingMenu = null;
     this.pendingContinueWatchingFocusIndex = null;
+    this.pendingHomeRevealFocus = null;
     this.cancelPendingContinueWatchingEnter();
     this.forceInitialContinueWatchingFocus = false;
     this.continueWatchingLoading = false;
+    this.needsContinueWatchingRetry = false;
     this.isRestoringFocusFromBack = Boolean(navigationContext?.isBackNavigation);
     if (navigationContext?.restoredState?.layoutMode) {
       this.savedFocusStates = {
@@ -4244,13 +5457,8 @@ export const HomeScreen = {
     const profiles = await ProfileManager.getProfiles();
     const activeProfile = profiles.find((entry) => String(entry.id) === activeProfileId) || profiles[0] || null;
     const bootBackground = buildProfileBackgroundStyle(activeProfile?.avatarColorHex || DEFAULT_PROFILE_COLOR);
-    this.container.innerHTML = `
-      <div class="home-boot">
-        <img src="assets/brand/app_logo_wordmark.png" class="home-boot-logo" alt="Nuvio" />
-        <div class="home-boot-shimmer"></div>
-      </div>
-    `;
-    const bootNode = this.container.querySelector(".home-boot");
+    this.container.innerHTML = renderLogoLoadingMarkup({ className: "home-boot", label: "Loading home" });
+    const bootNode = this.container.querySelector(".app-loading-screen");
     if (bootNode) {
       bootNode.style.background = bootBackground;
     }
@@ -4259,10 +5467,17 @@ export const HomeScreen = {
 
   async loadData({ background = false } = {}) {
     const token = this.homeLoadToken;
+    const bootPreloadDeadline = background ? 0 : Date.now() + HOME_BOOT_PRELOAD_BUDGET_MS;
+    const cachedImagePrewarmPromise = background ? null : this.prewarmCachedHomeImages(bootPreloadDeadline).catch((error) => {
+      console.warn("Home cached image prewarm failed", error);
+    });
     const prefs = LayoutPreferences.get();
     this.layoutPrefs = prefs;
     this.sidebarExpanded = Boolean(this.layoutPrefs?.modernSidebar && this.sidebarExpanded);
     this.layoutMode = String(prefs.homeLayout || "classic").toLowerCase();
+    if (!background || !Number.isFinite(this.visibleHomeRowCount)) {
+      this.visibleHomeRowCount = this.getInitialVisibleHomeRowCount();
+    }
 
     const preserveContinueWatching = Boolean(background && this.continueWatchingDisplay?.length);
     const suppressContinueWatchingLoading = preserveContinueWatching;
@@ -4280,6 +5495,18 @@ export const HomeScreen = {
     const recentProgressPromise = watchProgressRepository.getRecent(10).catch((error) => {
       recentProgressError = error;
       return [];
+    });
+    const bootContinueWatchingPromise = background ? null : this.resolveContinueWatchingState({
+      allProgressPromise: progressAllPromise,
+      recentProgressPromise,
+      progressAllError,
+      recentProgressError,
+      preserveContinueWatching,
+      previousContinueWatchingSignature,
+      keepLoadingWhenUnresolved: true
+    }).catch((error) => {
+      console.warn("Home boot continue watching warmup failed", error);
+      return null;
     });
 
     const addons = await addonRepository.getInstalledAddons();
@@ -4303,13 +5530,51 @@ export const HomeScreen = {
     const initialCatalogLoad = this.getInitialCatalogLoadCount();
     const initialDescriptors = catalogDescriptors.slice(0, initialCatalogLoad);
     const deferredDescriptors = catalogDescriptors.slice(initialCatalogLoad);
+    let bootDeferredRowsPromise = null;
+    let bootDeferredRowsApplied = false;
+    if (!background && deferredDescriptors.length) {
+      bootDeferredRowsPromise = this.fetchCatalogRows(deferredDescriptors, {
+        allowLoading: true,
+        batchSize: this.getBootCatalogBatchSize(),
+        timeoutMs: HOME_ROW_TIMEOUT_MS
+      }).catch((error) => {
+        console.warn("Home boot deferred rows warmup failed", error);
+        return [];
+      });
+    }
 
     const initialRows = await this.fetchCatalogRows(initialDescriptors, { allowLoading: true });
     if (token !== this.homeLoadToken) {
       return;
     }
-    this.rows = this.sortAndFilterRows(initialRows);
-    if (!preserveContinueWatching) {
+    let bootRows = initialRows;
+
+    let bootContinueWatchingState = null;
+    if (bootContinueWatchingPromise) {
+      bootContinueWatchingState = await withTimeout(
+        bootContinueWatchingPromise,
+        remainingBudgetMs(bootPreloadDeadline),
+        null
+      );
+    }
+
+    if (bootDeferredRowsPromise) {
+      const bootDeferredRows = await withTimeout(
+        bootDeferredRowsPromise,
+        remainingBudgetMs(bootPreloadDeadline),
+        null
+      );
+      if (Array.isArray(bootDeferredRows)) {
+        bootRows = mergeRowsByKey([...initialRows, ...bootDeferredRows]);
+        bootDeferredRowsApplied = true;
+      }
+    }
+    this.rows = this.sortAndFilterRows(bootRows);
+
+    const bootContinueWatchingApplied = Boolean(bootContinueWatchingState);
+    if (bootContinueWatchingState) {
+      this.applyContinueWatchingState(bootContinueWatchingState);
+    } else if (!preserveContinueWatching) {
       this.continueWatchingDisplay = [];
       this.continueWatchingLoading = true;
       this.allProgress = [];
@@ -4322,9 +5587,39 @@ export const HomeScreen = {
     this.heroCandidates = uniqueById(this.collectHeroCandidates(this.rows).map((item) => normalizeCatalogItem(item)));
     this.heroIndex = 0;
     this.heroItem = this.pickInitialHero();
+    let bootHeroEnriched = false;
+    if (!background && this.layoutMode !== "modern" && remainingBudgetMs(bootPreloadDeadline) > 500) {
+      bootHeroEnriched = await withTimeout(
+        this.enrichHero(this.heroCandidates[0] || null).then(() => true),
+        Math.min(remainingBudgetMs(bootPreloadDeadline), 2600),
+        false
+      );
+    }
+    if (!background) {
+      if (cachedImagePrewarmPromise) {
+        await withTimeout(
+          cachedImagePrewarmPromise,
+          Math.min(600, remainingBudgetMs(bootPreloadDeadline)),
+          null
+        );
+      }
+      await this.preloadBootImages(bootPreloadDeadline);
+    }
     this.loadedProfileId = String(ProfileManager.getActiveProfileId() || "");
     this.hasLoadedOnce = true;
     this.render();
+    if (this.needsContinueWatchingRetry) {
+      this.retryContinueWatchingState({
+        token,
+        allProgressPromise: progressAllPromise,
+        recentProgressPromise,
+        progressAllError,
+        recentProgressError,
+        preserveContinueWatching,
+        previousContinueWatchingSignature,
+        background
+      });
+    }
     const previousSidebarProfileSignature = buildSidebarProfileSignature(this.sidebarProfile);
     sidebarProfilePromise.then((profile) => {
       if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
@@ -4332,14 +5627,17 @@ export const HomeScreen = {
       }
       if (profile && buildSidebarProfileSignature(profile) !== previousSidebarProfileSignature) {
         this.sidebarProfile = profile;
-        this.requestBackgroundRender();
+        if (!this.patchSidebarProfileDom(profile)) {
+          this.requestBackgroundRender();
+        }
       }
     });
 
-    if (deferredDescriptors.length) {
+    if (deferredDescriptors.length && !bootDeferredRowsApplied) {
       const progressiveDeferredRows = this.shouldProgressivelyRenderDeferredRows();
-      this.fetchCatalogRows(deferredDescriptors, {
-        allowLoading: true,
+      const allowDeferredLoadingRows = !this.isPerformanceConstrained();
+      const deferredRowsPromise = bootDeferredRowsPromise || this.fetchCatalogRows(deferredDescriptors, {
+        allowLoading: allowDeferredLoadingRows,
         batchSize: this.getDeferredCatalogBatchSize(),
         onBatch: progressiveDeferredRows
           ? (batchRows) => {
@@ -4358,7 +5656,8 @@ export const HomeScreen = {
             this.requestBackgroundRender();
           }
           : null
-      }).then((extraRows) => {
+      });
+      deferredRowsPromise.then((extraRows) => {
         if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
           return;
         }
@@ -4371,6 +5670,7 @@ export const HomeScreen = {
         if (!this.heroItem) {
           this.heroItem = this.pickInitialHero();
         }
+        this.preloadCurrentHomeImages();
         this.requestBackgroundRender();
         this.retryPendingCatalogRows();
       }).catch((error) => {
@@ -4378,7 +5678,7 @@ export const HomeScreen = {
       });
     }
 
-    if (this.layoutMode !== "modern") {
+    if (this.layoutMode !== "modern" && !bootHeroEnriched) {
       this.enrichHero(this.heroCandidates[0] || null).then(() => {
         if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
           return;
@@ -4389,80 +5689,44 @@ export const HomeScreen = {
       });
     }
 
-    (async () => {
-      const [allProgress, continueWatching] = await Promise.all([progressAllPromise, recentProgressPromise]);
-      if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
-        return;
-      }
-      this.allProgress = Array.isArray(allProgress) ? allProgress : [];
-      this.continueWatching = Array.isArray(continueWatching) ? continueWatching : [];
-      const needsNextUp = this.continueWatching.some((item) => isSeriesTypeForContinueWatching(item?.contentType || item?.type))
-        || this.allProgress.some((item) => isSeriesTypeForContinueWatching(item?.contentType || item?.type));
-      this.watchedItems = needsNextUp ? await watchedItemsRepository.getAll(2000).catch(() => []) : [];
-      if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
-        return;
-      }
-      this.nextUpProgressCandidates = this.selectNextUpProgressCandidates(this.allProgress, this.continueWatching)
-        .slice(0, CW_MAX_NEXT_UP_LOOKUPS);
-      const shouldShowLoading = Boolean((this.continueWatching?.length || 0) + (this.nextUpProgressCandidates?.length || 0));
+    if (!bootContinueWatchingApplied) {
+      const fallbackContinueWatchingState = () => this.resolveContinueWatchingState({
+        allProgressPromise: progressAllPromise,
+        recentProgressPromise,
+        progressAllError,
+        recentProgressError,
+        preserveContinueWatching,
+        previousContinueWatchingSignature,
+        keepLoadingWhenUnresolved: true
+      });
+      const continueWatchingStatePromise = bootContinueWatchingPromise
+        ? bootContinueWatchingPromise.then((state) => state || fallbackContinueWatchingState())
+        : fallbackContinueWatchingState();
+      continueWatchingStatePromise.then((state) => {
+        if (token !== this.homeLoadToken || Router.getCurrent() !== "home" || !state) {
+          return;
+        }
       const previousDisplaySignature = buildContinueWatchingSignature(this.continueWatchingDisplay);
       const previousHeroIdentity = buildHeroIdentity(this.heroItem);
       const previousLoadingState = Boolean(this.continueWatchingLoading);
-      if (!suppressContinueWatchingLoading) {
-        this.continueWatchingLoading = shouldShowLoading;
-        this.continueWatchingDisplay = [];
-        if (previousLoadingState !== this.continueWatchingLoading || previousDisplaySignature) {
-          this.requestBackgroundRender();
-        }
-      }
-
-      if (!shouldShowLoading) {
-        if (suppressContinueWatchingLoading && (progressAllError || recentProgressError)) {
-          this.continueWatchingLoading = false;
-          return;
-        }
-        if (preserveContinueWatching) {
-          const nextSignature = "";
-          if (nextSignature === previousContinueWatchingSignature) {
-            this.continueWatchingLoading = false;
-            return;
-          }
-        }
-        this.continueWatchingLoading = false;
-        this.continueWatchingDisplay = [];
-        if (previousLoadingState || previousDisplaySignature) {
-          this.requestBackgroundRender();
-        }
-        return;
-      }
-
-      try {
-        const enriched = await this.enrichContinueWatching(this.continueWatching, {
-          allProgress: this.allProgress,
-          watchedItems: this.watchedItems,
-          nextUpProgressCandidates: this.nextUpProgressCandidates
-        });
-        if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
-          return;
-        }
-        const nextDisplayStrict = buildVisibleContinueWatchingItems(enriched, { requireArtwork: true });
-        const nextDisplay = nextDisplayStrict.length
-          ? nextDisplayStrict
-          : buildVisibleContinueWatchingItems(enriched, { requireArtwork: false });
-        const nextSignature = preserveContinueWatching
-          ? buildContinueWatchingSignature(nextDisplay)
-          : "";
-        if (preserveContinueWatching && nextSignature === previousContinueWatchingSignature) {
-          this.continueWatchingLoading = false;
-          return;
-        }
-        this.continueWatchingDisplay = nextDisplay;
-        this.continueWatchingLoading = false;
+        this.applyContinueWatchingState(state);
         if (this.layoutMode === "modern" && this.continueWatchingDisplay.length) {
           this.heroItem = this.pickInitialHero();
           if (!background && !this.hasAppliedInitialContinueWatchingFocus) {
             this.forceInitialContinueWatchingFocus = true;
           }
+        }
+        if (this.needsContinueWatchingRetry) {
+          this.retryContinueWatchingState({
+            token,
+            allProgressPromise: progressAllPromise,
+            recentProgressPromise,
+            progressAllError,
+            recentProgressError,
+            preserveContinueWatching,
+            previousContinueWatchingSignature,
+            background
+          });
         }
         const nextDisplaySignature = buildContinueWatchingSignature(this.continueWatchingDisplay);
         const nextHeroIdentity = buildHeroIdentity(this.heroItem);
@@ -4471,23 +5735,17 @@ export const HomeScreen = {
           || previousHeroIdentity !== nextHeroIdentity) {
           this.requestBackgroundRender();
         }
-      } catch (error) {
-        console.warn("Continue watching async enrichment failed", error);
+      }).catch((error) => {
+        console.warn("Continue watching load failed", error);
+        if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
+          return;
+        }
         this.continueWatchingLoading = false;
-        if (!suppressContinueWatchingLoading && previousLoadingState) {
+        if (!suppressContinueWatchingLoading) {
           this.requestBackgroundRender();
         }
-      }
-    })().catch((error) => {
-      console.warn("Continue watching load failed", error);
-      if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
-        return;
-      }
-      this.continueWatchingLoading = false;
-      if (!suppressContinueWatchingLoading) {
-        this.requestBackgroundRender();
-      }
-    });
+      });
+    }
 
     this.retryPendingCatalogRows();
   },
@@ -4596,24 +5854,30 @@ export const HomeScreen = {
     (async () => {
       for (let index = 0; index < pendingRows.length; index += retryBatchSize) {
         const batch = pendingRows.slice(index, index + retryBatchSize);
-        const settled = await Promise.allSettled(batch.map(async (row) => {
-          const result = await withTimeout(catalogRepository.getCatalog({
-            addonBaseUrl: row.addonBaseUrl,
-            addonId: row.addonId,
-            addonName: row.addonName,
-            catalogId: row.catalogId,
-            catalogName: row.catalogName,
-            type: row.type,
-            skip: 0,
-            supportsSkip: true
-          }), HOME_ROW_RETRY_TIMEOUT_MS, { status: "error", message: "timeout" });
-          if (result?.status !== "success") {
-            return null;
+        const settled = await Promise.all(batch.map(async (row) => {
+          try {
+            const result = await withTimeout(catalogRepository.getCatalog({
+              addonBaseUrl: row.addonBaseUrl,
+              addonId: row.addonId,
+              addonName: row.addonName,
+              catalogId: row.catalogId,
+              catalogName: row.catalogName,
+              type: row.type,
+              skip: 0,
+              supportsSkip: true
+            }), HOME_ROW_RETRY_TIMEOUT_MS, { status: "error", message: "timeout" });
+
+            if (result?.status !== "success") {
+              throw new Error(result?.message || "Catalog status error");
+            }
+            
+            return { 
+              status: "fulfilled", 
+              value: { ...row, result } 
+            };
+          } catch (err) {
+            return { status: "rejected", reason: err };
           }
-          return {
-            ...row,
-            result
-          };
         }));
         if (token !== this.homeLoadToken || Router.getCurrent() !== "home") {
           return;
@@ -4680,6 +5944,8 @@ export const HomeScreen = {
     const focusState = retainedFocusState && retainedFocusState.focusKind === "item"
       ? retainedFocusState
       : null;
+    this.ensureVisibleHomeRowsIncludeFocusState(focusState || retainedFocusState);
+    const visibleRows = this.getVisibleHomeRows(this.rows);
     const expandFocusedPoster = this.layoutMode === "modern"
       && Boolean(this.layoutPrefs?.focusedPosterBackdropExpandEnabled || modernLandscapePostersEnabled)
       && Number(this.layoutPrefs?.focusedPosterBackdropExpandDelaySeconds ?? 3) <= 0
@@ -4703,7 +5969,7 @@ export const HomeScreen = {
 
     if (this.layoutMode === "modern") {
       modernLayoutPayload = renderModernHomeLayout({
-        rows: this.rows,
+        rows: visibleRows,
         heroItem,
         heroCandidates: this.heroCandidates,
         continueWatchingItems: this.continueWatchingDisplay || [],
@@ -4733,7 +5999,7 @@ export const HomeScreen = {
         loading: Boolean(this.continueWatchingLoading),
         loadingCount: effectiveContinueWatchingLoadingCount
       });
-      const legacyRowsPayload = renderLegacyCatalogRowsMarkup(this.rows, {
+      const legacyRowsPayload = renderLegacyCatalogRowsMarkup(visibleRows, {
         layoutMode: this.layoutMode,
         showPosterLabels,
         showCatalogAddonName,
@@ -4769,6 +6035,7 @@ export const HomeScreen = {
         </main>
       </div>
       ${this.renderContinueWatchingMenu()}
+      ${this.renderPosterHoldMenu()}
     `;
 
     if (modernLandscapePostersEnabled) {
@@ -4788,8 +6055,14 @@ export const HomeScreen = {
     this.bindHomeViewportEvents();
     const canAttemptRestore = Boolean(retainedFocusState);
     let restoredFocus = false;
-    if (this.continueWatchingMenu) {
+    if (this.pendingHomeRevealFocus) {
+      restoredFocus = this.applyPendingHomeRevealFocus();
+    } else if (this.continueWatchingMenu) {
+      this.restoreHomeViewportScrollState(this.continueWatchingMenu.backgroundFocusState || retainedFocusState);
       restoredFocus = this.applyContinueWatchingMenuFocus();
+    } else if (this.posterHoldMenu) {
+      this.restoreHomeViewportScrollState(this.posterHoldMenu.backgroundFocusState || retainedFocusState);
+      restoredFocus = this.applyPosterHoldMenuFocus();
     } else if (Number.isFinite(this.pendingContinueWatchingFocusIndex)) {
       const cards = Array.from(this.container?.querySelectorAll(".home-row-continue .home-content-card.focusable") || []);
       const target = cards[Math.max(0, Math.min(cards.length - 1, Number(this.pendingContinueWatchingFocusIndex || 0)))]
@@ -4813,6 +6086,21 @@ export const HomeScreen = {
           this.scheduleModernHeroUpdate(current);
           this.scheduleFocusedPosterFlow(current);
         }
+      }
+    } else if (this.pendingPosterFocus && Number.isFinite(Number(this.pendingPosterFocus.rowIndex)) && Number.isFinite(Number(this.pendingPosterFocus.itemIndex))) {
+      const rowIndex = Number(this.pendingPosterFocus.rowIndex);
+      const itemIndex = Number(this.pendingPosterFocus.itemIndex);
+      this.pendingPosterFocus = null;
+      const target = this.container?.querySelector(`.home-poster-card.focusable[data-row-index="${rowIndex}"][data-item-index="${itemIndex}"]`) || null;
+      if (target) {
+        restoredFocus = true;
+        this.container.querySelectorAll(".focusable.focused").forEach((node) => node.classList.remove("focused"));
+        target.classList.add("focused");
+        this.focusWithoutAutoScroll(target);
+        this.lastMainFocus = target;
+        this.rememberMainRowFocus(target);
+        this.ensureTrackHorizontalVisibility(target);
+        this.ensureMainVerticalVisibility(target);
       }
     } else if (canAttemptRestore) {
       restoredFocus = this.restoreFocusState(retainedFocusState);
@@ -4888,11 +6176,91 @@ export const HomeScreen = {
     };
   },
 
-  selectNextUpProgressCandidates(allProgress = [], inProgressItems = []) {
+  buildNextUpProgressCandidatesFromWatchedItems(watchedItems = [], inProgressItems = [], dismissedNextUpKeys = []) {
     const cutoffMs = Date.now() - (CW_DAYS_CAP * 24 * 60 * 60 * 1000);
+    const dismissed = new Set(Array.isArray(dismissedNextUpKeys) ? dismissedNextUpKeys : []);
     const inProgressSeriesIds = new Set(
       (Array.isArray(inProgressItems) ? inProgressItems : [])
         .filter((item) => isSeriesTypeForContinueWatching(item?.contentType || item?.type))
+        .filter((item) => shouldTreatAsInProgressForContinueWatching(item))
+        .map((item) => String(item?.contentId || "").trim())
+        .filter(Boolean)
+    );
+
+    const latestWatchedByContent = new Map();
+    (Array.isArray(watchedItems) ? watchedItems : []).forEach((entry) => {
+      const watchedAt = Number(entry?.watchedAt || entry?.updatedAt || 0);
+      if (watchedAt < cutoffMs) {
+        return;
+      }
+      const contentId = String(entry?.contentId || "").trim();
+      if (isMalformedNextUpSeedContentId(contentId) || inProgressSeriesIds.has(contentId)) {
+        return;
+      }
+      const contentType = String(entry?.contentType || "series").toLowerCase();
+      if (!isSeriesTypeForContinueWatching(contentType)) {
+        return;
+      }
+      const season = Number(entry?.season || 0);
+      const episode = Number(entry?.episode || 0);
+      if (season <= 0 || episode <= 0) {
+        return;
+      }
+      if (dismissed.has(nextUpDismissKey(contentId, season, episode))) {
+        return;
+      }
+
+      const existing = latestWatchedByContent.get(contentId);
+      if (!existing) {
+        latestWatchedByContent.set(contentId, entry);
+        return;
+      }
+
+      const existingUpdated = Number(existing.watchedAt || existing.updatedAt || 0);
+      const incomingUpdated = watchedAt;
+      if (incomingUpdated > existingUpdated) {
+        latestWatchedByContent.set(contentId, entry);
+        return;
+      }
+      if (incomingUpdated === existingUpdated) {
+        const existingKey = (Number(existing.season || 0) * 1000) + Number(existing.episode || 0);
+        const incomingKey = (season * 1000) + episode;
+        if (incomingKey > existingKey) {
+          latestWatchedByContent.set(contentId, entry);
+        }
+      }
+    });
+
+    return Array.from(latestWatchedByContent.values())
+      .map((entry) => ({
+        contentId: String(entry?.contentId || "").trim(),
+        contentType: isSeriesTypeForContinueWatching(entry?.contentType) ? String(entry.contentType).toLowerCase() : "series",
+        videoId: String(entry?.videoId || entry?.contentId || "").trim(),
+        season: Number(entry?.season || 0),
+        episode: Number(entry?.episode || 0),
+        title: firstNonEmpty(entry?.title, entry?.name, entry?.contentId),
+        episodeTitle: firstNonEmpty(entry?.episodeTitle),
+        positionMs: 1,
+        durationMs: 1,
+        progressPercent: 100,
+        updatedAt: Number(entry?.watchedAt || entry?.updatedAt || Date.now()),
+        source: "watched_items"
+      }))
+      .sort((left, right) => Number(right.updatedAt || 0) - Number(left.updatedAt || 0));
+  },
+
+  selectNextUpProgressCandidates(allProgress = [], inProgressItems = [], watchedItems = [], dismissedNextUpKeys = []) {
+    const watchedItemSeeds = this.buildNextUpProgressCandidatesFromWatchedItems(watchedItems, inProgressItems, dismissedNextUpKeys);
+    if (watchedItemSeeds.length) {
+      return watchedItemSeeds;
+    }
+
+    const cutoffMs = Date.now() - (CW_DAYS_CAP * 24 * 60 * 60 * 1000);
+    const dismissed = new Set(Array.isArray(dismissedNextUpKeys) ? dismissedNextUpKeys : []);
+    const inProgressSeriesIds = new Set(
+      (Array.isArray(inProgressItems) ? inProgressItems : [])
+        .filter((item) => isSeriesTypeForContinueWatching(item?.contentType || item?.type))
+        .filter((item) => shouldTreatAsInProgressForContinueWatching(item))
         .map((item) => String(item?.contentId || "").trim())
         .filter(Boolean)
     );
@@ -4903,7 +6271,7 @@ export const HomeScreen = {
         return;
       }
       const contentId = String(entry?.contentId || "").trim();
-      if (!contentId || inProgressSeriesIds.has(contentId)) {
+      if (isMalformedNextUpSeedContentId(contentId) || inProgressSeriesIds.has(contentId)) {
         return;
       }
       if (!isSeriesTypeForContinueWatching(entry?.contentType)) {
@@ -4911,7 +6279,10 @@ export const HomeScreen = {
       }
       const season = Number(entry?.season || 0);
       const episode = Number(entry?.episode || 0);
-      if (season <= 0 || episode <= 0 || !isCompletedForContinueWatching(entry)) {
+      if (season <= 0 || episode <= 0 || !shouldUseAsCompletedNextUpSeed(entry)) {
+        return;
+      }
+      if (dismissed.has(nextUpDismissKey(contentId, season, episode))) {
         return;
       }
 
@@ -5018,7 +6389,7 @@ export const HomeScreen = {
     return null;
   },
 
-  resolveNextUpEpisode(meta = {}, completedProgress = {}, allProgress = [], watchedEpisodeKeys = new Set()) {
+  resolveNextUpEpisode(meta = {}, completedProgress = {}, allProgress = [], watchedEpisodeKeys = new Set(), { showUnairedNextUp = true } = {}) {
     const episodes = normalizeEpisodeEntries(meta?.videos || []);
     if (!episodes.length) {
       return null;
@@ -5034,6 +6405,14 @@ export const HomeScreen = {
     const anchorEpisode = Number(completedProgress?.episode || 0);
     if (anchorIndex < 0 && anchorSeason > 0 && anchorEpisode > 0) {
       anchorIndex = episodes.findIndex((entry) => Number(entry.season || 0) === anchorSeason && Number(entry.episode || 0) === anchorEpisode);
+    }
+
+    if (anchorIndex < 0 && anchorSeason === 1 && anchorEpisode > 0) {
+      const seasonCount = new Set(episodes.map((entry) => Number(entry.season || 0))).size;
+      const globalIndex = anchorEpisode - 1;
+      if (seasonCount > 1 && globalIndex >= 0 && globalIndex < episodes.length) {
+        anchorIndex = globalIndex;
+      }
     }
 
     if (anchorIndex < 0) {
@@ -5071,6 +6450,9 @@ export const HomeScreen = {
       if (candidateProgress && shouldTreatAsInProgressForContinueWatching(candidateProgress)) {
         return null;
       }
+      if (!showUnairedNextUp && !hasEpisodeAiredForContinueWatching(candidate.released)) {
+        continue;
+      }
       return candidate;
     }
 
@@ -5081,11 +6463,14 @@ export const HomeScreen = {
     allProgress = [],
     inProgressItems = [],
     nextUpProgressCandidates = [],
-    watchedItems = []
+    watchedItems = [],
+    dismissedNextUpKeys = [],
+    showUnairedNextUp = true,
+    metaTimeoutMs = CW_NEXT_UP_META_TIMEOUT_MS
   } = {}) {
     const resolvedCandidates = (Array.isArray(nextUpProgressCandidates) && nextUpProgressCandidates.length)
       ? nextUpProgressCandidates
-      : this.selectNextUpProgressCandidates(allProgress, inProgressItems);
+      : this.selectNextUpProgressCandidates(allProgress, inProgressItems, watchedItems, dismissedNextUpKeys);
 
     if (!resolvedCandidates.length) {
       return [];
@@ -5095,6 +6480,7 @@ export const HomeScreen = {
     const lookupCount = Math.min(CW_MAX_NEXT_UP_LOOKUPS, neededSlots || CW_MAX_VISIBLE_ITEMS);
     const limitedCandidates = resolvedCandidates.slice(0, lookupCount);
     const watchedEpisodeIndex = this.buildWatchedEpisodeIndex(watchedItems);
+    const dismissed = new Set(Array.isArray(dismissedNextUpKeys) ? dismissedNextUpKeys : []);
 
     const nextUpItems = await Promise.all(limitedCandidates.map(async (progressEntry) => {
       const contentType = String(progressEntry?.contentType || "series").toLowerCase();
@@ -5102,10 +6488,15 @@ export const HomeScreen = {
       if (!contentId || !isSeriesTypeForContinueWatching(contentType)) {
         return null;
       }
+      const seedSeason = Number(progressEntry?.season || 0) || null;
+      const seedEpisode = Number(progressEntry?.episode || 0) || null;
+      if (dismissed.has(nextUpDismissKey(contentId, seedSeason, seedEpisode))) {
+        return null;
+      }
 
       let meta = null;
       try {
-        meta = await this.fetchMetaForContinueWatching(contentType, contentId, CW_NEXT_UP_META_TIMEOUT_MS);
+        meta = await this.fetchMetaForContinueWatching(contentType, contentId, metaTimeoutMs);
       } catch (error) {
         console.warn("Next up meta lookup failed", error);
       }
@@ -5115,7 +6506,7 @@ export const HomeScreen = {
       }
 
       const watchedEpisodeKeys = watchedEpisodeIndex.get(contentId) || new Set();
-      const nextEpisode = this.resolveNextUpEpisode(meta, progressEntry, allProgress, watchedEpisodeKeys);
+      const nextEpisode = this.resolveNextUpEpisode(meta, progressEntry, allProgress, watchedEpisodeKeys, { showUnairedNextUp });
       if (!nextEpisode) {
         return null;
       }
@@ -5127,6 +6518,8 @@ export const HomeScreen = {
         videoId: nextEpisode.id || null,
         season: Number(nextEpisode.season || 0) || null,
         episode: Number(nextEpisode.episode || 0) || null,
+        seedSeason,
+        seedEpisode,
         episodeTitle: firstNonEmpty(nextEpisode.title),
         positionMs: 0,
         durationMs: 0,
@@ -5159,9 +6552,10 @@ export const HomeScreen = {
   },
 
   async enrichContinueWatching(items = [], options = {}) {
+    const metaTimeoutMs = Number(options?.metaTimeoutMs || 0) || CW_META_TIMEOUT_MS;
     const inProgressItems = await Promise.all((items || []).map(async (item) => {
       try {
-        const meta = await this.fetchMetaForContinueWatching(item.contentType || "movie", item.contentId, 1800);
+        const meta = await this.fetchMetaForContinueWatching(item.contentType || "movie", item.contentId, metaTimeoutMs);
         if (meta) {
           return {
             ...item,
@@ -5213,12 +6607,16 @@ export const HomeScreen = {
       allProgress: options?.allProgress || [],
       inProgressItems,
       nextUpProgressCandidates: options?.nextUpProgressCandidates || [],
-      watchedItems: options?.watchedItems || []
+      watchedItems: options?.watchedItems || [],
+      dismissedNextUpKeys: options?.dismissedNextUpKeys || [],
+      showUnairedNextUp: options?.showUnairedNextUp !== false,
+      metaTimeoutMs: Number(options?.nextUpMetaTimeoutMs || 0) || CW_NEXT_UP_META_TIMEOUT_MS
     });
 
     const inProgressSeriesIds = new Set(
       inProgressItems
         .filter((item) => isSeriesTypeForContinueWatching(item?.contentType || item?.type))
+        .filter((item) => shouldTreatAsInProgressForContinueWatching(item))
         .map((item) => String(item?.contentId || "").trim())
         .filter(Boolean)
     );
@@ -5335,25 +6733,53 @@ export const HomeScreen = {
     const currentFocusedNode = this.container?.querySelector(".focusable.focused") || null;
     const code = Number(event?.keyCode || 0);
     const originalKeyCode = Number(event?.originalKeyCode || code || 0);
-    const isTizenHoldTarget = Platform.isTizen() && this.isContinueWatchingHoldTarget(currentFocusedNode);
-    if (!isTizenHoldTarget || code !== 13) {
+    const isContinueWatchingHoldTarget = this.isContinueWatchingHoldTarget(currentFocusedNode);
+    const isPosterHoldTarget = this.isPosterHoldTarget(currentFocusedNode);
+    if (!isContinueWatchingHoldTarget || code !== 13) {
       this.cancelPendingContinueWatchingEnter();
       this.cancelPendingContinueWatchingHold();
     }
-    if (this.continueWatchingMenu) {
+    if (!isPosterHoldTarget || code !== 13) {
+      this.cancelPendingPosterEnter();
+      this.cancelPendingPosterHold();
+    }
+    if (Platform.isBackEvent(event)) {
+      if (this.closeOpenHoldMenu() || Date.now() < Number(this.suppressHomeExitUntil || 0)) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        event.stopImmediatePropagation?.();
+        Router.suppressNextPopstate?.();
+        return;
+      }
+    }
+    if (this.hasOpenHoldMenu()) {
       if (Platform.isBackEvent(event)) {
         event.preventDefault?.();
-        this.closeContinueWatchingMenu();
+        event.stopPropagation?.();
+        event.stopImmediatePropagation?.();
+        this.closeOpenHoldMenu();
+        Router.suppressNextPopstate?.();
         return;
       }
       if (code === 38 || code === 40) {
         event.preventDefault?.();
-        this.moveContinueWatchingMenuFocus(code === 38 ? -1 : 1);
+        if (this.posterHoldMenu) {
+          this.movePosterHoldMenuFocus(code === 38 ? -1 : 1);
+        } else {
+          this.moveContinueWatchingMenuFocus(code === 38 ? -1 : 1);
+        }
         return;
       }
       if (code === 13) {
         event.preventDefault?.();
-        void this.activateContinueWatchingMenuOption();
+        if (this.suppressHoldMenuEnterUntilKeyUp) {
+          return;
+        }
+        if (this.posterHoldMenu) {
+          void this.activatePosterHoldMenuOption();
+        } else {
+          void this.activateContinueWatchingMenuOption();
+        }
         return;
       }
       return;
@@ -5390,7 +6816,6 @@ export const HomeScreen = {
     if (this.handleHomeDpad(event)) {
       return;
     }
-    const isContinueWatchingHoldTarget = this.isContinueWatchingHoldTarget(currentFocusedNode);
     const wantsContinueWatchingMenu = isContinueWatchingHoldTarget
       && ((code === 13 && event?.repeat) || originalKeyCode === 82 || code === 93);
     if (wantsContinueWatchingMenu) {
@@ -5400,10 +6825,26 @@ export const HomeScreen = {
       this.openContinueWatchingMenu(currentFocusedNode);
       return;
     }
-    if (Platform.isTizen() && code === 13 && isContinueWatchingHoldTarget) {
+    if (code === 13 && isContinueWatchingHoldTarget) {
       event.preventDefault?.();
       if (!event?.repeat && !this.hasPendingContinueWatchingHold(currentFocusedNode)) {
         this.startPendingContinueWatchingHold(currentFocusedNode);
+      }
+      return;
+    }
+    const wantsPosterHoldMenu = isPosterHoldTarget
+      && ((code === 13 && event?.repeat) || originalKeyCode === 82 || code === 93);
+    if (wantsPosterHoldMenu) {
+      event.preventDefault?.();
+      this.cancelPendingPosterEnter();
+      this.cancelPendingPosterHold();
+      void this.openPosterHoldMenu(currentFocusedNode);
+      return;
+    }
+    if (code === 13 && isPosterHoldTarget) {
+      event.preventDefault?.();
+      if (!event?.repeat && !this.hasPendingPosterHold(currentFocusedNode)) {
+        this.startPendingPosterHold(currentFocusedNode);
       }
       return;
     }
@@ -5430,7 +6871,13 @@ export const HomeScreen = {
       activateLegacySidebarAction(action, "home");
       return;
     }
-    if (action === "openDetail") this.openDetailFromNode(current);
+    if (action === "openDetail") {
+      if (this.isPosterHoldTarget(current)) {
+        this.schedulePosterEnter(current);
+      } else {
+        this.openDetailFromNode(current);
+      }
+    }
     if (action === "openCatalogSeeAll") this.openCatalogSeeAllFromNode(current);
     if (action === "resumeProgress") {
       this.scheduleContinueWatchingEnter(current);
@@ -5438,8 +6885,12 @@ export const HomeScreen = {
   },
 
   onKeyUp(event) {
-    if (!Platform.isTizen()) {
-      return;
+    if (this.suppressHoldMenuEnterUntilKeyUp) {
+      this.suppressHoldMenuEnterUntilKeyUp = false;
+      if (Number(event?.keyCode || 0) === 13) {
+        event.preventDefault?.();
+        return;
+      }
     }
     if (Number(event?.keyCode || 0) !== 13) {
       return;
@@ -5447,12 +6898,21 @@ export const HomeScreen = {
     const current = this.container?.querySelector(".home-continue-card.focusable.focused") || null;
     if (this.completePendingContinueWatchingHold(current)) {
       event.preventDefault?.();
+      return;
+    }
+    const poster = this.container?.querySelector(".home-poster-card.focusable.focused[data-action='openDetail']") || null;
+    if (this.completePendingPosterHold(poster)) {
+      event.preventDefault?.();
     }
   },
 
   consumeBackRequest() {
-    if (this.continueWatchingMenu) {
-      this.closeContinueWatchingMenu();
+    if (this.closeOpenHoldMenu()) {
+      Router.suppressNextPopstate?.();
+      return true;
+    }
+    if (Date.now() < Number(this.suppressHomeExitUntil || 0)) {
+      Router.suppressNextPopstate?.();
       return true;
     }
     return false;
@@ -5461,7 +6921,14 @@ export const HomeScreen = {
   cleanup() {
     this.cancelPendingContinueWatchingEnter();
     this.cancelPendingContinueWatchingHold();
+    this.cancelPendingPosterEnter();
+    this.cancelPendingPosterHold();
     this.continueWatchingMenu = null;
+    this.posterHoldMenu = null;
+    this.releaseHoldMenuBackTrap();
+    this.suppressHoldMenuEnterUntilKeyUp = false;
+    this.needsContinueWatchingRetry = false;
+    this.continueWatchingRetryInFlight = null;
     this.persistCurrentFocusState();
     this.homeLoadToken = (this.homeLoadToken || 0) + 1;
     this.cancelScheduledRender();
@@ -5480,6 +6947,15 @@ export const HomeScreen = {
       this.boundHomeViewport.removeEventListener("scroll", this.boundHomeViewportScrollHandler);
     }
     this.boundHomeViewport = null;
+    if (this.homeBackHandler) {
+      document.removeEventListener("keydown", this.homeBackHandler, true);
+      document.removeEventListener("keyup", this.homeBackHandler, true);
+      this.homeBackHandler = null;
+    }
+    if (this.homeBeforeExitHandler) {
+      document.removeEventListener("nuvio:beforeExitApp", this.homeBeforeExitHandler, true);
+      this.homeBeforeExitHandler = null;
+    }
     if (this.homeTruncationFrame) {
       cancelAnimationFrame(this.homeTruncationFrame);
       this.homeTruncationFrame = null;

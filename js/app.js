@@ -1,4 +1,20 @@
 import "./runtime/polyfills.js";
+import "./runtime/remoteConsole.js";
+import "intersection-observer";  
+import "whatwg-fetch";
+
+(function applyLegacyPatches() {
+  const originalGetElementById = document.getElementById;
+  document.getElementById = function(id) {
+    if (id === undefined || id === null || id === "") return null;
+    return originalGetElementById.call(document, id);
+  };
+
+  if (typeof Node === "undefined") {
+    globalThis.Node = { ELEMENT_NODE: 1 };
+  }
+})();
+
 import { Router } from "./ui/navigation/router.js";
 import { FocusEngine } from "./ui/navigation/focusEngine.js";
 import { PlayerController } from "./core/player/playerController.js";
@@ -74,13 +90,12 @@ async function handleAddonDeepLink() {
     } else if (added === false) {
       console.log("Addon already installed:", addonUrl);
     }
-    // Clean the URL so reloads don't re-trigger
     try {
       const cleanUrl = new URL(window.location.href);
       cleanUrl.searchParams.delete("addon");
       window.history.replaceState(null, "", cleanUrl.toString());
     } catch {
-      // Ignore URL cleanup failures (e.g. file:// protocol).
+      // URL cleanup can fail on restricted protocols; the add-on install already finished.
     }
   } catch (error) {
     console.error("Addon deep link failed:", error);
@@ -95,7 +110,9 @@ async function bootstrapApp() {
 
   Router.init();
   PlayerController.init();
-  FocusEngine.init();
+  
+  FocusEngine.init(); 
+  
   ThemeManager.apply();
   I18n.apply();
   warmStreamingLibs({ delayMs: 1400 });
@@ -120,9 +137,13 @@ async function bootstrapApp() {
         return;
       }
       const hasSeenQr = LocalStore.get("hasSeenAuthQrOnFirstLaunch");
-      Router.navigate("authQrSignIn", {
-        onboardingMode: !hasSeenQr
-      });
+      if (Platform.isDesktop()) {
+        Router.navigate("authSignIn");
+      } else {
+        Router.navigate("authQrSignIn", {
+          onboardingMode: !hasSeenQr
+        });
+      }
     }
 
     if (state === AuthState.AUTHENTICATED) {

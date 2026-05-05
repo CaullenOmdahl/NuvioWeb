@@ -37,7 +37,9 @@ import {
 const ROTATED_DPAD_KEY = "rotatedDpadMapping";
 const STRICT_DPAD_GRID_KEY = "strictDpadGridNavigation";
 const SETTINGS_UI_STATE_KEY = "settingsScreenUiState";
-const SETTINGS_VERSION_LABEL = "0.1.3";
+const SETTINGS_VERSION_LABEL = typeof __NUVIO_APP_VERSION__ !== "undefined"
+  ? __NUVIO_APP_VERSION__
+  : "0.0.0";
 const PRIVACY_URL = "https://tapframe.github.io/NuvioStreaming/#privacy-policy";
 const SUPPORTERS_URL = "https://github.com/Tapframe/NuvioStreaming";
 
@@ -73,10 +75,40 @@ const UI_SCALE_OPTIONS = [
   { id: 150, label: "150%" }
 ];
 
+const APP_LANGUAGE_NATIVE_LABELS = {
+  en: "English",
+  es: "Espanol",
+  fr: "Francais",
+  hi: "Hindi",
+  hu: "Magyar",
+  it: "Italiano",
+  ja: "Japanese",
+  nl: "Nederlands",
+  pl: "Polski",
+  ro: "Romana",
+  se: "Svenska",
+  sk: "Slovencina",
+  sl: "Slovenscina",
+  tr: "Turkce",
+  vi: "Tieng Viet"
+};
+
+function appLanguageOptionLabel(localeId) {
+  const normalized = String(localeId || "").trim().toLowerCase();
+  if (!normalized) {
+    return "System Default";
+  }
+  return APP_LANGUAGE_NATIVE_LABELS[normalized] || normalized.toUpperCase();
+}
+
 const LANGUAGE_OPTIONS = [
   { id: null, labelKey: "common.systemDefault" },
-  { id: "en", labelKey: "common.english" },
-  { id: "it", labelKey: "common.italian" }
+  ...I18n.getSupportedLocales()
+    .map((localeId) => ({
+      id: localeId,
+      label: appLanguageOptionLabel(localeId)
+    }))
+    .sort((left, right) => String(left.label || "").localeCompare(String(right.label || "")))
 ];
 
 const TMDB_LANGUAGE_OPTIONS = [
@@ -173,8 +205,7 @@ const AVAILABLE_SUBTITLE_LANGUAGES = [
 ].sort((left, right) => left.label.localeCompare(right.label));
 
 const PREFERRED_SUBTITLE_LANGUAGE_OPTIONS = [
-  { id: "off", label: "Off" },
-  { id: "forced", label: "Forced" },
+  { id: "off", labelKey: "subtitle_none_forced_only", label: "None (forced only)" },
   ...AVAILABLE_SUBTITLE_LANGUAGES
 ];
 
@@ -376,10 +407,21 @@ function labelForPlaybackLanguage(language) {
   );
 }
 
-function normalizeSelectableSubtitleLanguageCode(language) {
-  const code = String(language ?? "").trim().toLowerCase();
+function extractLanguageCode(value, fallback = "off") {
+  if (value && typeof value === "object") {
+    return extractLanguageCode(value.id ?? value.value ?? value.code ?? value.language ?? value.languageCode, fallback);
+  }
+  const code = String(value ?? "").trim();
+  if (!code || code.toLowerCase() === "[object object]") {
+    return fallback;
+  }
+  return code;
+}
+
+function normalizeSelectableSubtitleLanguageCode(language, fallback = "off") {
+  const code = extractLanguageCode(language, fallback).trim().toLowerCase();
   if (!code) {
-    return "system";
+    return fallback;
   }
   switch (code) {
     case "pt-br":
@@ -408,10 +450,8 @@ function labelForSubtitlePlaybackLanguage(language) {
   return translateOptionLabel(
     PREFERRED_SUBTITLE_LANGUAGE_OPTIONS.find((item) => String(item.id) === normalized),
     normalized === "off"
-      ? "Off"
-      : normalized === "forced"
-        ? "Forced"
-        : normalized === "system"
+      ? t("subtitle_none_forced_only", {}, "None (forced only)")
+      : normalized === "system"
           ? t("common.system")
           : String(language || "system")
   );
@@ -422,18 +462,7 @@ function subtitleLanguageOptionCode(option) {
   if (!normalized || normalized === "off") {
     return "";
   }
-  if (normalized === "forced") {
-    return "FORCED";
-  }
   return normalized.toUpperCase();
-}
-
-function qualityLabel(value) {
-  const normalized = String(value || "auto").toLowerCase();
-  if (normalized === "2160p") return "2160p";
-  if (normalized === "1080p") return "1080p";
-  if (normalized === "720p") return "720p";
-  return t("common.auto");
 }
 
 function renderModeLabel(value) {
@@ -1046,10 +1075,11 @@ export const SettingsScreen = {
 
   renderAccountSection(model) {
     const signedIn = model.authState === "authenticated";
-    this.actionMap.set("account:signin", () => Router.navigate("authQrSignIn"));
+    const signInRoute = Platform.isDesktop() ? "authSignIn" : "authQrSignIn";
+    this.actionMap.set("account:signin", () => Router.navigate(signInRoute));
     this.actionMap.set("account:signout", async () => {
       await AuthManager.signOut();
-      Router.navigate("authQrSignIn");
+      Router.navigate(signInRoute);
     });
 
     return `
@@ -1064,8 +1094,12 @@ export const SettingsScreen = {
         : `<p class="settings-account-note">${t("settings.account.syncNote")}</p>
               ${this.renderActionRow({
           focusKey: "account:signin",
-          title: t("settings.account.signInWithQr"),
-          subtitle: t("settings.account.signInWithQrSubtitle")
+          title: Platform.isDesktop()
+            ? t("settings.account.signInWithEmail", {}, "Sign in with email")
+            : t("settings.account.signInWithQr"),
+          subtitle: Platform.isDesktop()
+            ? t("settings.account.signInWithEmailSubtitle", {}, "Use your Nuvio account directly on this desktop app.")
+            : t("settings.account.signInWithQrSubtitle")
         })}`}
           ${signedIn ? this.renderActionRow({
           focusKey: "account:signout",
@@ -1137,7 +1171,7 @@ export const SettingsScreen = {
 
     this.actionMap.set("appearance:uiScale", () => {
       this.openOptionDialog({
-        title: "UI Scale",
+        title: t("settings.appearance.uiScale", {}, "UI Scale"),
         options: UI_SCALE_OPTIONS,
         selectedId: model.layout.uiScale,
         returnFocusKey: "appearance:uiScale",
@@ -1183,8 +1217,8 @@ export const SettingsScreen = {
         <div class="settings-stack">
           ${this.renderActionRow({
       focusKey: "appearance:uiScale",
-      title: "UI Scale",
-      subtitle: "Adjust the overall interface size",
+      title: t("settings.appearance.uiScale", {}, "UI Scale"),
+      subtitle: t("settings.appearance.uiScaleSubtitle", {}, "Adjust the overall interface size"),
       value: `${model.layout.uiScale}%`
     })}
         </div>
@@ -1232,6 +1266,9 @@ export const SettingsScreen = {
     });
     this.actionMap.set("layout:hideUnreleased", () => {
       LayoutPreferences.set({ hideUnreleasedContent: !LayoutPreferences.get().hideUnreleasedContent });
+    });
+    this.actionMap.set("layout:showUnairedNextUp", () => {
+      LayoutPreferences.set({ showUnairedNextUp: !LayoutPreferences.get().showUnairedNextUp });
     });
     this.actionMap.set("layout:posterLabels", () => {
       LayoutPreferences.set({ posterLabelsEnabled: !LayoutPreferences.get().posterLabelsEnabled });
@@ -1366,6 +1403,12 @@ export const SettingsScreen = {
       title: t("settings.layout.hideUnreleased.title"),
       subtitle: t("settings.layout.hideUnreleased.subtitle"),
       checked: Boolean(model.layout.hideUnreleasedContent)
+    })}
+        ${this.renderToggleRow({
+      focusKey: "layout:showUnairedNextUp",
+      title: t("settings.layout.showUnairedNextUp.title", {}, "Unaired Next Up Episodes"),
+      subtitle: t("settings.layout.showUnairedNextUp.subtitle", {}, "Show upcoming episodes in Continue Watching before their release date."),
+      checked: model.layout.showUnairedNextUp !== false
     })}
       </div>
     `;
@@ -1708,9 +1751,6 @@ export const SettingsScreen = {
     this.actionMap.set("playback:toggle:general", () => {
       this.toggleExpandedSection("playback", "general");
     });
-    this.actionMap.set("playback:toggle:stream", () => {
-      this.toggleExpandedSection("playback", "stream");
-    });
     this.actionMap.set("playback:toggle:audio", () => {
       this.toggleExpandedSection("playback", "audio");
     });
@@ -1720,18 +1760,6 @@ export const SettingsScreen = {
 
     this.actionMap.set("playback:autoplay", () => {
       PlayerSettingsStore.set({ autoplayNextEpisode: !PlayerSettingsStore.get().autoplayNextEpisode });
-    });
-    this.actionMap.set("playback:quality", () => {
-      const options = ["auto", "2160p", "1080p", "720p"];
-      this.openOptionDialog({
-        title: t("settings.dialogs.preferredQuality"),
-        options: options.map((option) => ({ id: option, label: qualityLabel(option) })),
-        selectedId: String(PlayerSettingsStore.get().preferredQuality || "auto"),
-        returnFocusKey: "playback:quality",
-        onSelect: (option) => {
-          PlayerSettingsStore.set({ preferredQuality: option.id });
-        }
-      });
     });
     this.actionMap.set("playback:trailer", () => {
       PlayerSettingsStore.set({ trailerAutoplay: !PlayerSettingsStore.get().trailerAutoplay });
@@ -1807,17 +1835,6 @@ export const SettingsScreen = {
       </div>
     `;
 
-    const streamBody = `
-      <div class="settings-stack">
-        ${this.renderActionRow({
-      focusKey: "playback:quality",
-      title: t("settings.playback.preferredQuality.title"),
-      subtitle: t("settings.playback.preferredQuality.subtitle"),
-      value: qualityLabel(model.player.preferredQuality)
-    })}
-      </div>
-    `;
-
     const audioBody = `
       <div class="settings-stack">
         ${this.renderToggleRow({
@@ -1868,13 +1885,6 @@ export const SettingsScreen = {
       subtitle: t("settings.playback.groups.general.subtitle"),
       expanded: Boolean(expanded.general),
       bodyHtml: generalBody
-    })}
-          ${this.renderCollapsibleRow({
-      focusKey: "playback:toggle:stream",
-      title: t("settings.playback.groups.stream.title"),
-      subtitle: t("settings.playback.groups.stream.subtitle"),
-      expanded: Boolean(expanded.stream),
-      bodyHtml: streamBody
     })}
           ${this.renderCollapsibleRow({
       focusKey: "playback:toggle:audio",
@@ -2442,6 +2452,9 @@ export const SettingsScreen = {
       return;
     }
 
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    event?.stopImmediatePropagation?.();
     await this.activateFocused();
   },
 

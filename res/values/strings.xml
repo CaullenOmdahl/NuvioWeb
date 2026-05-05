@@ -735,6 +735,7 @@
     <string name="subtitle_dialog_title">Subtitles</string>
     <string name="subtitle_no_builtin">No built-in subtitles available</string>
     <string name="subtitle_loading_addon">Loading subtitles from addons…</string>
+    <string name="subtitle_loading_builtin">Loading subtitle tracks…</string>
     <string name="subtitle_no_addon">No addon subtitles available</string>
     <string name="subtitle_text_color">Text Color</string>
     <string name="subtitle_outline_color">Outline Color</string>
@@ -745,6 +746,7 @@
     <string name="subtitle_tab_style">Style</string>
     <string name="subtitle_tab_delay">Delay</string>
     <string name="subtitle_none">None</string>
+    <string name="subtitle_none_forced_only">None (forced only)</string>
     <string name="subtitle_all">All</string>
     <string name="subtitle_section_core">Core</string>
     <string name="subtitle_section_advanced">Advanced</string>
@@ -762,6 +764,7 @@
     <string name="subtitle_style_bold">Bold</string>
     <string name="subtitle_style_text_color">Text Color</string>
     <string name="subtitle_style_outline">Outline</string>
+    <string name="subtitle_style_outline_color">Outline Color</string>
     <string name="subtitle_style_bottom_offset">Bottom Offset</string>
     <string name="subtitle_style_defaults">Defaults</string>
     <string name="subtitle_style_on">On</string>
@@ -793,6 +796,8 @@
     <!-- SearchScreen -->
     <string name="search_keyboard_hint">Press Done on the keyboard to search</string>
     <string name="search_placeholder">Search movies &amp; series</string>
+    <string name="search_no_results_title">No Results</string>
+    <string name="search_no_results_subtitle">Try searching with different keywords</string>
     <string name="search_start_title">Start Searching</string>
     <string name="search_start_subtitle">Enter at least 2 characters</string>
     <string name="search_start_subtitle_no_discover">Discover is disabled. Enter at least 2 characters</string>
@@ -802,18 +807,18 @@
     <string name="search_voice_unavailable">Voice search is unavailable on this device.</string>
 
     <!-- LibraryScreen -->
-    <string name="library_syncing">Syncing Trakt library…</string>
+    <string name="library_syncing">Syncing library…</string>
     <string name="library_title">Library</string>
     <string name="library_filter_list">List</string>
     <string name="library_filter_type">Type</string>
     <string name="library_filter_sort">Sort</string>
-    <string name="library_sort_trakt_order">Trakt Order</string>
+    <string name="library_sort_trakt_order">List Order</string>
     <string name="library_sort_added_desc">Added ↓</string>
     <string name="library_sort_added_asc">Added ↑</string>
     <string name="library_sort_title_asc">Title A-Z</string>
     <string name="library_sort_title_desc">Title Z-A</string>
     <string name="library_manage_lists">Manage Lists</string>
-    <string name="library_manage_trakt_lists">Manage Trakt Lists</string>
+    <string name="library_manage_trakt_lists">Manage Lists</string>
     <string name="library_no_lists">No personal lists yet.</string>
     <string name="library_list_create">Create</string>
     <string name="library_list_edit">Edit</string>
@@ -825,7 +830,7 @@
     <string name="library_list_description_label">Description</string>
     <string name="library_list_privacy">Privacy</string>
     <string name="library_delete_title">Delete this list?</string>
-    <string name="library_delete_subtitle">This removes the list and all list items from Trakt.</string>
+    <string name="library_delete_subtitle">This removes the list and all its items.</string>
     <string name="library_delete_confirm">Delete</string>
     <string name="library_source_local">LOCAL</string>
     <string name="library_type_all">All</string>
@@ -948,7 +953,7 @@
     <string name="update_unknown_sources">Allow installs from unknown sources to continue.</string>
     <!-- AccountScreen -->
     <string name="account_title">Account</string>
-    <string name="account_sign_in_description">Sign in to sync your library, watch progress, addons, and plugins across devices. Library sync uses Nuvio Sync when Trakt is not connected, and watch progress can use either Trakt or Nuvio Sync.</string>
+    <string name="account_sign_in_description">Sign in to sync your library, watch progress, addons, and plugins across devices.</string>
     <string name="account_sync_code_title">Sync Code</string>
     <string name="account_sync_code_description">Sync across devices without creating an account.</string>
     <string name="account_linked_devices">Linked Devices (%1$d)</string>
@@ -1074,7 +1079,7 @@
     <string name="detail.noEpisodesFound">No episodes found.</string>
     <string name="detail.seasonLabel">Season {{season}}</string>
     <string name="detail.episodeOptions">Episode Options</string>
-    <string name="home.continueStatusNextUp">Next Up</string>
+    <string name="home.continueStatusNextUp">Next episode</string>
     <string name="home.continueStatusContinue">Continue</string>
     <string name="home.continueStatusAlmostDone">Almost done</string>
     <string name="home.timeLeft">{{minutes}}m left</string>

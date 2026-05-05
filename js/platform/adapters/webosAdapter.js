@@ -1,5 +1,9 @@
 import { normalizeKeyEvent, isBackEvent } from "../sharedKeys.js";
 import { WebOSPlayerExtensions } from "../webos/webosPlayerExtensions.js";
+import {
+  isWebOsCompanionServiceAvailable,
+  requestWebOsCompanionService
+} from "../webos/webosCompanionService.js";
 
 function getAvplayApi() {
   const webapis = globalThis.webapis;
@@ -19,6 +23,15 @@ export const webosAdapter = {
       const scale = screenWidth / 1920;
       document.documentElement.style.setProperty("zoom", `${scale * 100}%`);
     }
+
+    if (isWebOsCompanionServiceAvailable()) {
+      requestWebOsCompanionService({
+        method: "ping",
+        parameters: {}
+      }).catch((error) => {
+        console.warn("webOS companion service ping failed:", error);
+      });
+    }
   },
 
   exitApp() {
@@ -28,11 +41,11 @@ export const webosAdapter = {
   },
 
   isBackEvent(event) {
-    return isBackEvent(event, [461, 27, 8]);
+    return isBackEvent(event, [461, 10009, 27, 8]);
   },
 
   normalizeKey(event) {
-    return normalizeKeyEvent(event, [461, 27, 8]);
+    return normalizeKeyEvent(event, [461, 10009, 27, 8]);
   },
 
   getDeviceLabel() {
