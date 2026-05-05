@@ -412,6 +412,48 @@ export const StreamScreen = {
     return true;
   },
 
+  createMouseEnterEvent(sourceEvent) {
+    return {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      repeat: false,
+      preventDefault() {
+        sourceEvent?.preventDefault?.();
+      },
+      stopPropagation() {
+        sourceEvent?.stopPropagation?.();
+      }
+    };
+  },
+
+  activateFocusedWithMouse(event) {
+    Promise.resolve(this.onKeyDown(this.createMouseEnterEvent(event)))
+      .catch((error) => console.error("Stream mouse activation failed", error));
+  },
+
+  onMouseActivate(target, event) {
+    const actionTarget = target?.closest?.("[data-mouse-action], .focusable");
+    if (!actionTarget || !this.container?.contains(actionTarget)) {
+      return false;
+    }
+
+    if (String(actionTarget.dataset?.mouseAction || "") === "goBack") {
+      if (!this.navigateBackFromStream()) {
+        Router.back();
+      }
+      return true;
+    }
+
+    if (!actionTarget.classList?.contains("focusable") || !actionTarget.dataset?.action) {
+      return false;
+    }
+
+    this.activateFocusedWithMouse(event);
+    return true;
+  },
+
   consumeBackRequest() {
     return this.navigateBackFromStream();
   },
@@ -694,6 +736,15 @@ export const StreamScreen = {
     return { isSeries, title, subtitle, episodeLabel, detailLine };
   },
 
+  renderDesktopRouteBackButton() {
+    const label = escapeHtml(t("common.back", {}, "Back"));
+    return `
+      <button class="desktop-route-back" type="button" data-mouse-action="goBack" aria-label="${label}" title="${label}">
+        <span aria-hidden="true">&larr;</span>
+      </button>
+    `;
+  },
+
   renderChip(name, selected, status) {
     const chipStatus = String(status || "success");
     const classes = [
@@ -793,6 +844,7 @@ export const StreamScreen = {
         <div class="stream-route-backdrop-dim"></div>
         <div class="stream-route-left-gradient"></div>
         <div class="stream-route-right-gradient"></div>
+        ${this.renderDesktopRouteBackButton()}
         <div class="stream-route-content">
           <section class="stream-route-left">
             <div class="stream-route-left-inner">

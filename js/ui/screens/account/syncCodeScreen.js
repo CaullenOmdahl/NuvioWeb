@@ -32,6 +32,40 @@ export const SyncCodeScreen = {
     ScreenUtils.setInitialFocus(this.container);
   },
 
+  activateAction(action) {
+    if (action === "setCode") {
+      const value = window.prompt(I18n.t("auth.syncCode.prompt"), LocalStore.get(KEY, ""));
+      if (value !== null) {
+        LocalStore.set(KEY, String(value).trim());
+        this.render();
+      }
+      return;
+    }
+
+    if (action === "clearCode") {
+      LocalStore.remove(KEY);
+      this.render();
+      return;
+    }
+
+    if (action === "back") {
+      Router.back();
+    }
+  },
+
+  onMouseActivate(target, event) {
+    const actionTarget = target?.closest?.(".focusable[data-action]");
+    if (!actionTarget || !this.container?.contains(actionTarget)) {
+      return false;
+    }
+
+    this.container.querySelectorAll(".focusable.focused").forEach((node) => node.classList.remove("focused"));
+    actionTarget.classList.add("focused");
+    event?.preventDefault?.();
+    this.activateAction(String(actionTarget.dataset.action || ""));
+    return true;
+  },
+
   onKeyDown(event) {
     if (ScreenUtils.handleDpadNavigation(event, this.container)) {
       return;
@@ -44,23 +78,7 @@ export const SyncCodeScreen = {
     if (!current) {
       return;
     }
-    const action = current.dataset.action;
-    if (action === "setCode") {
-      const value = window.prompt(I18n.t("auth.syncCode.prompt"), LocalStore.get(KEY, ""));
-      if (value !== null) {
-        LocalStore.set(KEY, String(value).trim());
-        this.render();
-      }
-      return;
-    }
-    if (action === "clearCode") {
-      LocalStore.remove(KEY);
-      this.render();
-      return;
-    }
-    if (action === "back") {
-      Router.back();
-    }
+    this.activateAction(String(current.dataset.action || ""));
   },
 
   cleanup() {

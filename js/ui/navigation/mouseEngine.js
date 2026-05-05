@@ -1,5 +1,7 @@
 import { Router } from "./router.js";
 
+const CLICK_TARGET_SELECTOR = ".focusable, [data-mouse-action]";
+
 export const MouseEngine = {
   active: false,
 
@@ -32,7 +34,11 @@ export const MouseEngine = {
   },
 
   onClick(event) {
-    const target = event.target?.closest?.(".focusable");
+    if (Number(event?.button || 0) !== 0 || event?.metaKey || event?.ctrlKey || event?.shiftKey || event?.altKey) {
+      return;
+    }
+
+    const target = event.target?.closest?.(CLICK_TARGET_SELECTOR);
     if (!target) {
       return;
     }
@@ -40,11 +46,21 @@ export const MouseEngine = {
     this.active = true;
     document.documentElement.classList.add("mouse-active");
 
-    const currentFocused = document.querySelector(".focusable.focused");
-    if (currentFocused && currentFocused !== target) {
-      currentFocused.classList.remove("focused");
+    const focusTarget = target.matches?.(".focusable") ? target : target.closest?.(".focusable");
+    if (focusTarget) {
+      const currentFocused = document.querySelector(".focusable.focused");
+      if (currentFocused && currentFocused !== focusTarget) {
+        currentFocused.classList.remove("focused");
+      }
+      focusTarget.classList.add("focused");
+      focusTarget.focus({ preventScroll: true });
     }
-    target.classList.add("focused");
-    target.focus({ preventScroll: true });
+
+    const currentScreen = Router.getCurrentScreen();
+    if (currentScreen?.onMouseActivate?.(target, event)) {
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      event.stopImmediatePropagation?.();
+    }
   }
 };

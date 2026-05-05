@@ -143,9 +143,17 @@
 
   attachFocus(callbacks) {
     const items = this.container.querySelectorAll(".focusable");
+    const activate = (node) => {
+      const action = node?.dataset?.action;
+      callbacks?.[action]?.();
+    };
 
     items.forEach((el, i) => {
       el.dataset.index = i;
+      el.addEventListener("click", () => {
+        this.moveFocus(items, i);
+        activate(el);
+      });
     });
 
     items[0]?.classList.add("focused");
@@ -165,8 +173,7 @@
       }
 
       if (event.keyCode === 13) {
-        const action = current.dataset.action;
-        callbacks?.[action]?.();
+        activate(current);
       }
     };
   }

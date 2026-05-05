@@ -1,4 +1,5 @@
 import { normalizeKeyEvent, isBackEvent } from "../sharedKeys.js";
+import { calculateTvDisplayScalePercent } from "../displayScale.js";
 
 function getAvplayApi() {
   const webapis = globalThis.webapis;
@@ -48,12 +49,13 @@ export const tizenAdapter = {
         });
       }
     }
+  },
 
-    const screenWidth = globalThis.screen?.width || globalThis.innerWidth || 0;
-    if (screenWidth > 1920) {
-      const scale = screenWidth / 1920;
-      document.documentElement.style.setProperty("zoom", `${scale * 100}%`);
-    }
+  getDisplayScalePercent() {
+    return calculateTvDisplayScalePercent({
+      screenWidth: globalThis.screen?.width,
+      width: globalThis.innerWidth
+    });
   },
 
   exitApp() {

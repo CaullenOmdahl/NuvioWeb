@@ -2202,6 +2202,7 @@ export const PlayerScreen = {
 
     if (this.isExternalFrameMode()) {
       root.innerHTML = `
+        ${this.renderDesktopRouteBackButton()}
         <div class="player-external-frame-shell">
           <iframe
             class="player-external-frame"
@@ -2217,6 +2218,7 @@ export const PlayerScreen = {
     } else {
       const header = this.getPlayerHeaderData();
       root.innerHTML = `
+        ${this.renderDesktopRouteBackButton()}
         <div id="playerLoadingOverlay" class="player-loading-overlay">
           <div class="player-loading-backdrop"${this.params.playerBackdropUrl ? ` style="background-image:url('${this.params.playerBackdropUrl}')"` : ""}></div>
           <div class="player-loading-gradient"></div>
@@ -2601,6 +2603,15 @@ export const PlayerScreen = {
           </div>
         ` : ""}
       </div>
+    `;
+  },
+
+  renderDesktopRouteBackButton() {
+    const label = escapeHtml(t("common.back", {}, "Back"));
+    return `
+      <button class="desktop-route-back" type="button" data-mouse-action="goBack" aria-label="${label}" title="${label}">
+        <span aria-hidden="true">&larr;</span>
+      </button>
     `;
   },
 
@@ -7705,6 +7716,44 @@ export const PlayerScreen = {
       this.cycleAspectMode();
       return;
     }
+  },
+
+  onMouseActivate(target, event) {
+    const actionTarget = target?.closest?.("[data-mouse-action], .player-control-btn.focusable");
+    if (!actionTarget || !this.container?.contains(actionTarget)) {
+      return false;
+    }
+
+    if (String(actionTarget.dataset?.mouseAction || "") === "goBack") {
+      if (!this.consumeBackRequest()) {
+        Router.back();
+      }
+      return true;
+    }
+
+    if (!actionTarget.classList?.contains("player-control-btn")) {
+      return false;
+    }
+
+    const action = String(actionTarget.dataset?.action || "");
+    if (!action) {
+      return false;
+    }
+
+    const buttons = Array.from(this.uiRefs?.controlButtons?.querySelectorAll?.(".player-control-btn") || []);
+    const index = buttons.indexOf(actionTarget);
+    if (index >= 0) {
+      this.controlFocusZone = "buttons";
+      this.controlFocusIndex = index;
+      this.stickyProgressFocus = false;
+      this.renderControlButtons();
+    }
+    this.autoHideControlsAfterSeek = false;
+    this.setControlsVisible(true, { focus: false });
+    this.performControlAction(action);
+    this.resetControlsAutoHide();
+    event?.preventDefault?.();
+    return true;
   },
 
   consumeBackRequest() {

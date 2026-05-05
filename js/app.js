@@ -69,6 +69,21 @@ function applyPerformanceMode() {
   document.body.classList.toggle("performance-constrained", constrained);
 }
 
+function bindDisplayScaleRefresh() {
+  let frameId = 0;
+  const refresh = () => {
+    if (frameId) {
+      return;
+    }
+    frameId = requestAnimationFrame(() => {
+      frameId = 0;
+      ThemeManager.apply();
+    });
+  };
+  window.addEventListener("resize", refresh);
+  globalThis.visualViewport?.addEventListener?.("resize", refresh);
+}
+
 function isAddonRemoteMode() {
   try {
     return new URLSearchParams(window.location.search).get("addonsRemote") === "1";
@@ -106,14 +121,15 @@ async function bootstrapApp() {
   renderAppShell();
   Platform.init();
   applyPerformanceMode();
+  ThemeManager.apply();
+  bindDisplayScaleRefresh();
   await I18n.init();
 
   Router.init();
   PlayerController.init();
-  
-  FocusEngine.init(); 
-  
-  ThemeManager.apply();
+
+  FocusEngine.init();
+
   I18n.apply();
   warmStreamingLibs({ delayMs: 1400 });
   handleAddonDeepLink();

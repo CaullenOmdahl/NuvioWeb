@@ -1,4 +1,5 @@
 import { normalizeKeyEvent, isBackEvent } from "../sharedKeys.js";
+import { calculateTvDisplayScalePercent } from "../displayScale.js";
 import { WebOSPlayerExtensions } from "../webos/webosPlayerExtensions.js";
 import {
   isWebOsCompanionServiceAvailable,
@@ -18,12 +19,6 @@ export const webosAdapter = {
   name: "webos",
 
   init() {
-    const screenWidth = globalThis.screen?.width || globalThis.innerWidth || 0;
-    if (screenWidth > 1920) {
-      const scale = screenWidth / 1920;
-      document.documentElement.style.setProperty("zoom", `${scale * 100}%`);
-    }
-
     if (isWebOsCompanionServiceAvailable()) {
       requestWebOsCompanionService({
         method: "ping",
@@ -32,6 +27,13 @@ export const webosAdapter = {
         console.warn("webOS companion service ping failed:", error);
       });
     }
+  },
+
+  getDisplayScalePercent() {
+    return calculateTvDisplayScalePercent({
+      screenWidth: globalThis.screen?.width,
+      width: globalThis.innerWidth
+    });
   },
 
   exitApp() {

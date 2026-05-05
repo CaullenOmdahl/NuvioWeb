@@ -1,5 +1,7 @@
 import { ThemeStore } from "../../data/local/themeStore.js";
 import { LayoutPreferences } from "../../data/local/layoutPreferences.js";
+import { combineDisplayScalePercent } from "../../platform/displayScale.js";
+import { Platform } from "../../platform/index.js";
 import { ThemeColors } from "./themeColors.js";
 
 const FONT_STACKS = {
@@ -50,9 +52,20 @@ export const ThemeManager = {
     );
     document.documentElement.style.setProperty("color-scheme", "dark");
 
-    const uiScale = Number(LayoutPreferences.get().uiScale || 100);
-    if (uiScale !== 100) {
-      document.documentElement.style.setProperty("zoom", `${uiScale}%`);
+    const uiScale = LayoutPreferences.get().uiScale;
+    const displayScale = combineDisplayScalePercent({
+      platformScalePercent: Platform.getDisplayScalePercent(),
+      userScalePercent: uiScale
+    });
+    document.documentElement.dataset.displayScale = String(displayScale);
+    document.documentElement.style.setProperty("--nuvio-display-scale", String(displayScale / 100));
+    const nativeScaleApplied = Platform.applyDisplayScalePercent(displayScale, {
+      userScalePercent: uiScale
+    });
+    if (nativeScaleApplied) {
+      document.documentElement.style.removeProperty("zoom");
+    } else if (displayScale !== 100) {
+      document.documentElement.style.setProperty("zoom", `${displayScale}%`);
     } else {
       document.documentElement.style.removeProperty("zoom");
     }

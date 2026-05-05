@@ -7314,6 +7314,14 @@
   pointer-events: none;
 }
 
+.platform-desktop .player-controls-overlay {
+  pointer-events: auto;
+}
+
+.platform-desktop .player-controls-overlay.hidden {
+  pointer-events: none;
+}
+
 .player-controls-overlay.modal-blocked {
   pointer-events: none;
 }
@@ -9108,6 +9116,161 @@
   color: var(--text-secondary);
 }
 
+.platform-desktop .series-stream-panel {
+  inset: 28px 28px 28px 64px;
+  grid-template-columns: minmax(200px, 0.56fr) minmax(0, 1.9fr);
+  gap: 16px;
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.platform-desktop .series-stream-logo {
+  max-height: 88px;
+  margin-bottom: 10px;
+}
+
+.platform-desktop .series-stream-heading {
+  font-size: 26px;
+  margin-bottom: 8px;
+}
+
+.platform-desktop .series-stream-episode {
+  font-size: 30px;
+}
+
+.platform-desktop .series-stream-episode-title {
+  margin-top: 6px;
+  font-size: 18px;
+}
+
+.platform-desktop .series-stream-filters {
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.platform-desktop .series-stream-filter {
+  height: 34px;
+  padding: 0 12px;
+  font-size: 14px;
+}
+
+.platform-desktop .series-stream-filter.focused {
+  box-shadow: 0 0 0 2px rgb(var(--secondary-color-rgb) / 0.3);
+}
+
+.platform-desktop .series-stream-list {
+  padding-right: 5px;
+}
+
+.platform-desktop .series-stream-card {
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+
+.platform-desktop .series-stream-card.focused {
+  box-shadow: 0 0 0 2px rgb(var(--secondary-color-rgb) / 0.28);
+}
+
+.platform-desktop .series-stream-title {
+  font-size: 15px;
+  line-height: 1.18;
+  max-height: 36px;
+}
+
+.platform-desktop .series-stream-desc {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.2;
+  max-height: 29px;
+}
+
+.platform-desktop .series-stream-meta {
+  gap: 6px;
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.platform-desktop .series-stream-addon-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.platform-desktop .series-stream-tags {
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.platform-desktop .series-stream-tag {
+  height: 18px;
+  padding: 0 7px;
+  font-size: 11px;
+}
+
+.platform-desktop .series-stream-empty {
+  padding: 14px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+
+.platform-desktop.desktop-display-compact .series-stream-panel {
+  inset: 18px 20px 18px 52px;
+  grid-template-columns: minmax(150px, 0.28fr) minmax(0, 0.72fr);
+  gap: 10px;
+  padding: 12px;
+}
+
+.platform-desktop.desktop-display-compact .series-stream-left {
+  justify-content: center;
+}
+
+.platform-desktop.desktop-display-compact .series-stream-filter {
+  height: 32px;
+  font-size: 13px;
+}
+
+.platform-desktop.desktop-display-compact .series-stream-card {
+  padding: 7px 9px;
+}
+
+.platform-desktop.desktop-display-compact .series-stream-title {
+  font-size: 14px;
+}
+
+.platform-desktop.desktop-display-compact .series-stream-desc {
+  font-size: 11px;
+}
+
+@media (max-width: 1280px), (max-height: 780px) {
+  .platform-desktop .series-stream-panel {
+    inset: 18px 20px 18px 52px;
+    grid-template-columns: minmax(150px, 0.28fr) minmax(0, 0.72fr);
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .platform-desktop .series-stream-left {
+    justify-content: center;
+  }
+
+  .platform-desktop .series-stream-filter {
+    height: 32px;
+    font-size: 13px;
+  }
+
+  .platform-desktop .series-stream-card {
+    padding: 7px 9px;
+  }
+
+  .platform-desktop .series-stream-title {
+    font-size: 14px;
+  }
+
+  .platform-desktop .series-stream-desc {
+    font-size: 11px;
+  }
+}
+
 .movie-detail-shell .series-detail-vignette {
   background:
     linear-gradient(90deg, rgba(4, 7, 11, 0.94) 0%, rgba(8, 12, 17, 0.72) 45%, rgba(8, 12, 17, 0.36) 68%, rgba(8, 12, 17, 0.2) 100%),
@@ -9481,6 +9644,53 @@
   height: 100vh;
   overflow: hidden;
   background: var(--detail-bg);
+}
+
+.desktop-route-back {
+  display: none;
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  z-index: 20;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(12, 12, 14, 0.62);
+  color: #fff;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 24px;
+  line-height: 1;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+  cursor: pointer;
+  pointer-events: auto;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.platform-desktop .desktop-route-back {
+  display: inline-flex;
+}
+
+.platform-desktop .desktop-route-back:hover,
+.platform-desktop .desktop-route-back:focus-visible {
+  border-color: var(--secondary-color);
+  background: rgba(255, 255, 255, 0.16);
+  outline: none;
+}
+
+.platform-desktop.desktop-display-compact .desktop-route-back {
+  top: 14px;
+  left: 14px;
+  width: 36px;
+  height: 36px;
+  font-size: 20px;
+}
+
+.platform-desktop .player-ui-root > .desktop-route-back {
+  z-index: 60;
 }
 
 .series-detail-backdrop {
@@ -11153,6 +11363,338 @@
   text-align: center;
 }
 
+.platform-desktop .stream-route-content {
+  grid-template-columns: minmax(220px, 0.34fr) minmax(0, 0.66fr);
+  padding: 28px 32px 28px 56px;
+}
+
+.platform-desktop .stream-route-left {
+  padding-right: 14px;
+}
+
+.platform-desktop .stream-route-left-inner {
+  width: min(78%, 300px);
+}
+
+.platform-desktop .stream-route-logo {
+  max-height: 94px;
+  margin-bottom: 12px;
+}
+
+.platform-desktop .stream-route-title {
+  margin-bottom: 10px;
+  font-size: 34px;
+}
+
+.platform-desktop .stream-route-episode-code {
+  font-size: 21px;
+}
+
+.platform-desktop .stream-route-subtitle {
+  font-size: 17px;
+}
+
+.platform-desktop .stream-route-detail-line {
+  font-size: 13px;
+}
+
+.platform-desktop .stream-route-right {
+  width: 100%;
+  max-width: 760px;
+}
+
+.platform-desktop .stream-route-chip-wrap {
+  height: 42px;
+  margin-bottom: 8px;
+}
+
+.platform-desktop .stream-route-chip-track {
+  gap: 8px;
+  padding: 4px;
+}
+
+.platform-desktop .stream-route-chip {
+  min-height: 34px;
+  padding: 0 14px;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.platform-desktop .stream-route-panel-shell {
+  border-radius: 14px;
+  padding: 9px;
+}
+
+.platform-desktop .stream-route-panel {
+  border-radius: 12px;
+}
+
+.platform-desktop .stream-route-list {
+  padding: 5px;
+  scroll-padding-top: 5px;
+  scroll-padding-bottom: 5px;
+}
+
+.platform-desktop .stream-route-card {
+  min-height: 96px;
+  margin-bottom: 7px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  gap: 12px;
+}
+
+.platform-desktop .stream-route-card.focused {
+  box-shadow: 0 0 0 2px var(--secondary-color), 0 6px 18px rgba(0, 0, 0, 0.24);
+}
+
+.platform-desktop .stream-route-card.skeleton {
+  min-height: 96px;
+}
+
+.platform-desktop .stream-route-card-heading {
+  font-size: 16px;
+  line-height: 20px;
+}
+
+.platform-desktop .stream-route-card-quality {
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.platform-desktop .stream-route-card-line {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.22;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+}
+
+.platform-desktop .stream-route-card-meta {
+  margin-top: 6px;
+  gap: 10px;
+}
+
+.platform-desktop .stream-route-meta-item {
+  gap: 5px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.platform-desktop .stream-route-meta-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.platform-desktop .stream-route-card-side {
+  width: 84px;
+  flex-basis: 84px;
+  gap: 6px;
+}
+
+.platform-desktop .stream-route-addon-badge {
+  width: 38px;
+  height: 38px;
+}
+
+.platform-desktop .stream-route-addon-badge span {
+  font-size: 18px;
+}
+
+.platform-desktop .stream-route-addon-name {
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.platform-desktop .stream-route-empty {
+  min-height: 120px;
+  padding: 18px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-content {
+  grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
+  padding: 18px 18px 18px 52px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-left {
+  padding-right: 8px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-left-inner {
+  width: min(88%, 220px);
+}
+
+.platform-desktop.desktop-display-compact .stream-route-logo {
+  max-height: 72px;
+  margin-bottom: 8px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-title {
+  margin-bottom: 6px;
+  font-size: 26px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-episode-code {
+  font-size: 16px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-subtitle {
+  font-size: 13px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-detail-line {
+  font-size: 11px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-right {
+  justify-self: stretch;
+  max-width: none;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-chip-wrap {
+  height: 36px;
+  margin-bottom: 6px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-chip {
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 12px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-panel-shell {
+  padding: 7px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-card {
+  min-height: 78px;
+  padding: 8px 10px;
+  gap: 9px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-card-heading {
+  font-size: 14px;
+  line-height: 18px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-card-quality {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-card-line,
+.platform-desktop.desktop-display-compact .stream-route-meta-item {
+  font-size: 11px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-card-side {
+  width: 48px;
+  flex-basis: 48px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-addon-badge {
+  width: 30px;
+  height: 30px;
+}
+
+.platform-desktop.desktop-display-compact .stream-route-addon-name {
+  display: none;
+}
+
+@media (max-width: 1280px), (max-height: 780px) {
+  .platform-desktop .stream-route-content {
+    grid-template-columns: minmax(170px, 220px) minmax(0, 1fr);
+    padding: 18px 18px 18px 52px;
+  }
+
+  .platform-desktop .stream-route-left {
+    padding-right: 8px;
+  }
+
+  .platform-desktop .stream-route-left-inner {
+    width: min(88%, 220px);
+  }
+
+  .platform-desktop .stream-route-logo {
+    max-height: 72px;
+    margin-bottom: 8px;
+  }
+
+  .platform-desktop .stream-route-title {
+    margin-bottom: 6px;
+    font-size: 26px;
+  }
+
+  .platform-desktop .stream-route-episode-code {
+    font-size: 16px;
+  }
+
+  .platform-desktop .stream-route-subtitle {
+    font-size: 13px;
+  }
+
+  .platform-desktop .stream-route-detail-line {
+    font-size: 11px;
+  }
+
+  .platform-desktop .stream-route-right {
+    justify-self: stretch;
+    max-width: none;
+  }
+
+  .platform-desktop .stream-route-chip-wrap {
+    height: 36px;
+    margin-bottom: 6px;
+  }
+
+  .platform-desktop .stream-route-chip {
+    min-height: 30px;
+    padding: 0 11px;
+    font-size: 12px;
+  }
+
+  .platform-desktop .stream-route-panel-shell {
+    padding: 7px;
+  }
+
+  .platform-desktop .stream-route-card {
+    min-height: 78px;
+    padding: 8px 10px;
+    gap: 9px;
+  }
+
+  .platform-desktop .stream-route-card-heading {
+    font-size: 14px;
+    line-height: 18px;
+  }
+
+  .platform-desktop .stream-route-card-quality {
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .platform-desktop .stream-route-card-line,
+  .platform-desktop .stream-route-meta-item {
+    font-size: 11px;
+  }
+
+  .platform-desktop .stream-route-card-side {
+    width: 48px;
+    flex-basis: 48px;
+  }
+
+  .platform-desktop .stream-route-addon-badge {
+    width: 30px;
+    height: 30px;
+  }
+
+  .platform-desktop .stream-route-addon-name {
+    display: none;
+  }
+}
+
 .stream-route-skeleton-line {
   height: 16px;
   border-radius: 999px;
@@ -11503,4 +12045,487 @@
   box-sizing: border-box;
   background: transparent;
   overflow: visible;
+}
+
+.platform-desktop.desktop-display-compact .qr-layout {
+  gap: 36px;
+  padding: 36px 56px;
+}
+
+.platform-desktop.desktop-display-compact .qr-brand-lockup {
+  width: min(360px, 72%);
+  margin-bottom: 28px;
+}
+
+.platform-desktop.desktop-display-compact .qr-logo {
+  max-height: 86px;
+}
+
+.platform-desktop.desktop-display-compact .qr-title {
+  font-size: 40px;
+}
+
+.platform-desktop.desktop-display-compact .qr-description {
+  margin-top: 16px;
+  font-size: 21px;
+}
+
+.platform-desktop.desktop-display-compact .qr-card {
+  max-width: 560px;
+  min-height: 0;
+  padding: 32px;
+  border-radius: 20px;
+}
+
+.platform-desktop.desktop-display-compact .qr-card-title {
+  font-size: 28px;
+}
+
+.platform-desktop.desktop-display-compact .qr-card-subtitle {
+  margin-bottom: 18px;
+  font-size: 17px;
+}
+
+.platform-desktop.desktop-display-compact .qr-code-frame {
+  width: 260px;
+  height: 260px;
+  padding: 10px;
+  border-radius: 16px;
+}
+
+.platform-desktop.desktop-display-compact .qr-code-text {
+  font-size: 16px;
+}
+
+.platform-desktop.desktop-display-compact .qr-status {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  font-size: 15px;
+}
+
+.platform-desktop.desktop-display-compact .qr-actions {
+  gap: 12px;
+  padding-top: 34px;
+}
+
+.platform-desktop.desktop-display-compact .qr-action-btn {
+  min-width: 132px;
+  height: 52px;
+  padding: 0 20px;
+  font-size: 18px;
+}
+
+.platform-desktop.desktop-display-compact .search-content {
+  padding: 18px 0 24px;
+  scroll-padding-top: 18px;
+}
+
+.platform-desktop.desktop-display-compact .search-header {
+  grid-template-columns: repeat(2, 72px) minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 0 40px;
+}
+
+.platform-desktop.desktop-display-compact .search-header.no-discover {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+
+.platform-desktop.desktop-display-compact .search-discover-btn {
+  width: 72px;
+  height: 72px;
+  border-radius: 14px;
+}
+
+.platform-desktop.desktop-display-compact .search-voice-btn {
+  width: 72px;
+  height: 72px;
+  border-radius: 14px;
+}
+
+.platform-desktop.desktop-display-compact .search-action-icon {
+  font-size: 34px;
+}
+
+.platform-desktop.desktop-display-compact .search-input-field {
+  height: 72px;
+  padding: 0 22px;
+  border-radius: 14px;
+  font-size: 24px;
+}
+
+.platform-desktop.desktop-display-compact .search-empty-state {
+  min-height: 280px;
+}
+
+.platform-desktop.desktop-display-compact .search-empty-icon {
+  font-size: 88px;
+}
+
+.platform-desktop.desktop-display-compact .search-empty-state h2 {
+  font-size: 38px;
+}
+
+.platform-desktop.desktop-display-compact .search-empty-state p {
+  font-size: 18px;
+}
+
+.platform-desktop.desktop-display-compact .library-main {
+  padding: 28px 40px 48px;
+}
+
+.platform-desktop.desktop-display-compact .library-page {
+  min-height: calc(100vh - 56px);
+}
+
+.platform-desktop.desktop-display-compact .library-page-header {
+  margin-bottom: 18px;
+}
+
+.platform-desktop.desktop-display-compact .library-page-title {
+  font-size: 42px;
+}
+
+.platform-desktop.desktop-display-compact .library-page-source {
+  padding-top: 6px;
+  font-size: 16px;
+  letter-spacing: 4px;
+}
+
+.platform-desktop.desktop-display-compact .library-picker-row {
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.platform-desktop.desktop-display-compact .library-picker-anchor {
+  min-height: 78px;
+  padding: 10px 18px 12px;
+  border-radius: 18px;
+  gap: 12px;
+}
+
+.platform-desktop.desktop-display-compact .library-picker-copy {
+  gap: 5px;
+}
+
+.platform-desktop.desktop-display-compact .library-picker-title {
+  font-size: 15px;
+}
+
+.platform-desktop.desktop-display-compact .library-picker-value {
+  font-size: 26px;
+}
+
+.platform-desktop.desktop-display-compact .library-picker-menu {
+  border-radius: 0 0 18px 18px;
+}
+
+.platform-desktop.desktop-display-compact .library-picker-option {
+  min-height: 58px;
+  padding: 0 18px;
+  font-size: 22px;
+}
+
+.platform-desktop.desktop-display-compact .library-actions-row {
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.platform-desktop.desktop-display-compact .library-action-button {
+  min-width: 128px;
+  min-height: 46px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-size: 18px;
+}
+
+.platform-desktop.desktop-display-compact .library-grid {
+  grid-template-columns: repeat(auto-fill, minmax(144px, 144px));
+  gap: 16px 14px;
+}
+
+.platform-desktop.desktop-display-compact .library-grid-card {
+  width: 144px;
+  gap: 8px;
+}
+
+.platform-desktop.desktop-display-compact .library-grid-poster {
+  width: 144px;
+  border-radius: 14px;
+}
+
+.platform-desktop.desktop-display-compact .library-grid-title {
+  font-size: 20px;
+}
+
+.platform-desktop.desktop-display-compact .library-grid-year {
+  font-size: 16px;
+}
+
+.platform-desktop.desktop-display-compact .settings-workspace {
+  width: min(1280px, calc(100% - 56px));
+  height: calc(100vh - 52px);
+  margin: 26px auto;
+  padding: 24px;
+  border-radius: 24px;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 24px;
+}
+
+.platform-desktop.desktop-display-compact .settings-sidebar {
+  gap: 12px;
+}
+
+.platform-desktop.desktop-display-compact .settings-nav-item {
+  min-height: 76px;
+  padding: 0 22px;
+}
+
+.platform-desktop.desktop-display-compact .settings-nav-leading {
+  gap: 14px;
+}
+
+.platform-desktop.desktop-display-compact .settings-nav-label {
+  font-size: 22px;
+}
+
+.platform-desktop.desktop-display-compact .settings-nav-icon-material {
+  width: 28px;
+  height: 28px;
+  font-size: 28px;
+}
+
+.platform-desktop.desktop-display-compact .settings-nav-icon-image {
+  width: 28px;
+  height: 28px;
+}
+
+.platform-desktop.desktop-display-compact .settings-content {
+  gap: 14px;
+}
+
+.platform-desktop.desktop-display-compact .settings-content-header {
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.platform-desktop.desktop-display-compact .settings-title {
+  font-size: 38px;
+  letter-spacing: 0;
+}
+
+.platform-desktop.desktop-display-compact .settings-subtitle {
+  font-size: 18px;
+}
+
+.platform-desktop.desktop-display-compact .settings-group-card {
+  padding: 18px;
+  border-radius: 22px;
+}
+
+.platform-desktop.desktop-display-compact .settings-stack {
+  gap: 12px;
+}
+
+.platform-desktop.desktop-display-compact .settings-account-status {
+  gap: 6px;
+  padding: 16px 18px;
+  border-radius: 18px;
+}
+
+.platform-desktop.desktop-display-compact .settings-account-status-label {
+  font-size: 14px;
+}
+
+.platform-desktop.desktop-display-compact .settings-account-status-value {
+  font-size: 22px;
+}
+
+.platform-desktop.desktop-display-compact .settings-action-row {
+  min-height: 74px;
+  padding: 12px 22px;
+  gap: 14px;
+}
+
+.platform-desktop.desktop-display-compact .settings-row-title {
+  font-size: 21px;
+}
+
+.platform-desktop.desktop-display-compact .settings-row-subtitle {
+  font-size: 15px;
+}
+
+.platform-desktop.desktop-display-compact .settings-row-value {
+  font-size: 18px;
+}
+
+.platform-desktop.desktop-display-compact .settings-toggle-row {
+  min-height: 74px;
+}
+
+.platform-desktop.desktop-display-compact .settings-toggle-pill {
+  width: 68px;
+  height: 34px;
+  padding: 3px;
+}
+
+.platform-desktop.desktop-display-compact .settings-toggle-thumb {
+  width: 28px;
+  height: 28px;
+}
+
+.platform-desktop.desktop-display-compact .settings-theme-grid {
+  gap: 14px;
+  max-height: 240px;
+}
+
+.platform-desktop.desktop-display-compact .settings-theme-card {
+  min-height: 170px;
+  padding: 18px;
+  border-radius: 20px;
+  gap: 12px;
+}
+
+.platform-desktop.desktop-display-compact .settings-theme-swatch-wrap {
+  min-height: 78px;
+}
+
+.platform-desktop.desktop-display-compact .settings-theme-swatch {
+  width: 72px;
+  height: 72px;
+}
+
+.platform-desktop.desktop-display-compact .settings-theme-name {
+  font-size: 18px;
+}
+
+.platform-desktop.desktop-display-compact .settings-collapsible-trigger,
+.platform-desktop.desktop-display-compact .settings-subsection-card .settings-action-row {
+  min-height: 74px;
+  padding: 12px 22px;
+}
+
+.platform-desktop.desktop-display-compact .settings-layout-card {
+  min-height: 150px;
+  padding: 16px;
+  border-radius: 18px;
+}
+
+.platform-desktop.desktop-display-compact .settings-layout-preview {
+  height: 78px;
+}
+
+.platform-desktop.desktop-display-compact .addons-main {
+  padding: 36px 48px 80px;
+}
+
+.platform-desktop.desktop-display-compact .addons-title {
+  margin-bottom: 22px;
+  font-size: 34px;
+  line-height: 44px;
+}
+
+.platform-desktop.desktop-display-compact .addons-lede {
+  max-width: 620px;
+  font-size: 20px;
+  line-height: 30px;
+}
+
+.platform-desktop.desktop-display-compact .addons-meta {
+  margin-top: 12px;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.platform-desktop.desktop-display-compact .addons-install-card {
+  padding: 24px;
+  border-radius: 18px;
+}
+
+.platform-desktop.desktop-display-compact .addons-install-heading {
+  margin-bottom: 16px;
+  font-size: 24px;
+  line-height: 32px;
+}
+
+.platform-desktop.desktop-display-compact .addons-install-surface {
+  min-height: 58px;
+  border-radius: 16px;
+  padding: 0 18px;
+}
+
+.platform-desktop.desktop-display-compact .addons-install-input {
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.platform-desktop.desktop-display-compact .addons-install-btn {
+  min-width: 116px;
+  min-height: 56px;
+  border-radius: 16px;
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.platform-desktop.desktop-display-compact .addons-large-row {
+  min-height: 96px;
+  margin-top: 24px;
+  padding: 0 26px;
+  border-radius: 24px;
+  grid-template-columns: 42px minmax(0, 1fr) 32px;
+  gap: 20px;
+}
+
+.platform-desktop.desktop-display-compact .addons-large-row-icon {
+  font-size: 34px;
+}
+
+.platform-desktop.desktop-display-compact .addons-large-row-copy strong {
+  font-size: 24px;
+  line-height: 32px;
+}
+
+.platform-desktop.desktop-display-compact .addons-large-row-copy small {
+  font-size: 17px;
+  line-height: 24px;
+}
+
+.platform-desktop.desktop-display-compact .addons-large-row-tail {
+  font-size: 30px;
+}
+
+.platform-desktop.desktop-display-compact .addons-subtitle {
+  margin: 26px 0;
+  font-size: 28px;
+  line-height: 36px;
+}
+
+.platform-desktop.desktop-display-compact .addons-installed-list {
+  gap: 24px;
+}
+
+.platform-desktop.desktop-display-compact .addons-installed-card {
+  padding: 24px;
+  border-radius: 18px;
+}
+
+.platform-desktop.desktop-display-compact .addons-installed-head h3 {
+  font-size: 24px;
+  line-height: 32px;
+}
+
+.platform-desktop.desktop-display-compact .addons-installed-description {
+  font-size: 20px;
+  line-height: 30px;
+}
+
+.platform-desktop.desktop-display-compact .addons-action-btn {
+  min-width: 76px;
+  min-height: 56px;
+  border-radius: 16px;
+}
+
+.platform-desktop.desktop-display-compact .addons-action-btn .material-icons {
+  font-size: 30px;
 }

@@ -600,6 +600,7 @@ export const CatalogSeeAllScreen = {
 
     this.container.innerHTML = `
       <div class="seeall-shell">
+        ${this.renderDesktopRouteBackButton()}
         <header class="seeall-header">
           <h2 class="seeall-title">${escapeHtml(title)}</h2>
           ${this.layoutPrefs?.catalogAddonNameEnabled !== false && descriptor.addonName
@@ -658,6 +659,59 @@ export const CatalogSeeAllScreen = {
         this.loadNextPage({ preserveViewport: true });
       }
     }, { passive: true });
+  },
+
+  renderDesktopRouteBackButton() {
+    const label = escapeHtml(t("common.back", {}, "Back"));
+    return `
+      <button class="desktop-route-back" type="button" data-mouse-action="goBack" aria-label="${label}" title="${label}">
+        <span aria-hidden="true">&larr;</span>
+      </button>
+    `;
+  },
+
+  createMouseEnterEvent(sourceEvent) {
+    return {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      repeat: false,
+      preventDefault() {
+        sourceEvent?.preventDefault?.();
+      },
+      stopPropagation() {
+        sourceEvent?.stopPropagation?.();
+      }
+    };
+  },
+
+  activateFocusedWithMouse(event) {
+    const enterEvent = this.createMouseEnterEvent(event);
+    Promise.resolve(this.onKeyDown(enterEvent))
+      .then(() => this.onKeyUp?.(enterEvent))
+      .catch((error) => console.error("Catalog see-all mouse activation failed", error));
+  },
+
+  onMouseActivate(target, event) {
+    const actionTarget = target?.closest?.("[data-mouse-action], .focusable");
+    if (!actionTarget || !this.container?.contains(actionTarget)) {
+      return false;
+    }
+
+    if (String(actionTarget.dataset?.mouseAction || "") === "goBack") {
+      if (!this.consumeBackRequest()) {
+        Router.back();
+      }
+      return true;
+    }
+
+    if (!actionTarget.classList?.contains("focusable") || !actionTarget.dataset?.action) {
+      return false;
+    }
+
+    this.activateFocusedWithMouse(event);
+    return true;
   },
 
   async onKeyDown(event) {

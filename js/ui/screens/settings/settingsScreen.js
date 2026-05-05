@@ -2339,6 +2339,42 @@ export const SettingsScreen = {
     }
   },
 
+  onMouseActivate(target, event) {
+    const actionTarget = target?.closest?.(".focusable");
+    if (!actionTarget || !this.container?.contains(actionTarget)) {
+      return false;
+    }
+
+    if (this.optionDialog && actionTarget.matches?.(".settings-dialog-option")) {
+      const options = Array.from(this.container.querySelectorAll(".settings-dialog-option.focusable"));
+      const optionIndex = options.indexOf(actionTarget);
+      if (optionIndex >= 0) {
+        this.dialogFocusIndex = optionIndex;
+      }
+      this.focusZone = "dialog";
+      this.applyFocus();
+    } else if (isRootSidebarNode(actionTarget)) {
+      const sidebarNodes = getRootSidebarNodes(this.container, this.layoutPrefs);
+      this.sidebarFocusIndex = Math.max(0, sidebarNodes.indexOf(actionTarget));
+      this.focusZone = "sidebar";
+      this.applyFocus();
+    } else if (String(actionTarget.dataset?.zone || "") === "nav") {
+      this.navIndex = clamp(Number(actionTarget.dataset.navIndex || 0), 0, Math.max(0, this.visibleSections.length - 1));
+      this.focusZone = "nav";
+      this.applyFocus();
+    } else if (String(actionTarget.dataset?.zone || "") === "content") {
+      this.focusZone = "content";
+      this.contentFocusKey = String(actionTarget.dataset.focusKey || "");
+      this.rememberAppearanceThemeFocusKey(this.contentFocusKey);
+      this.applyFocus();
+    }
+
+    Promise.resolve(this.activateFocused())
+      .catch((error) => console.error("Settings mouse activation failed", error));
+    event?.preventDefault?.();
+    return true;
+  },
+
   async onKeyDown(event) {
     if (Platform.isBackEvent(event)) {
       event?.preventDefault?.();

@@ -2,6 +2,7 @@ import { AuthManager } from "../../../core/auth/authManager.js";
 import { Router } from "../../navigation/router.js";
 import { ScreenUtils } from "../../navigation/screen.js";
 import { I18n } from "../../../i18n/index.js";
+import { Platform } from "../../../platform/index.js";
 
 export const AccountScreen = {
 
@@ -36,7 +37,7 @@ export const AccountScreen = {
 
   async signOut() {
     await AuthManager.signOut();
-    Router.navigate("authQrSignIn");
+    Router.navigate(Platform.isDesktop() ? "authSignIn" : "authQrSignIn");
   },
 
   render() {
@@ -85,6 +86,30 @@ export const AccountScreen = {
     focusables[0]?.classList.add("focused");
   },
 
+  async activateAction(action) {
+    if (action === "signin") {
+      Router.navigate(Platform.isDesktop() ? "authSignIn" : "authQrSignIn");
+      return;
+    }
+
+    if (action === "logout") {
+      await this.signOut();
+    }
+  },
+
+  onMouseActivate(target, event) {
+    const actionTarget = target?.closest?.(".focusable[data-action]");
+    if (!actionTarget || !this.container?.contains(actionTarget)) {
+      return false;
+    }
+
+    this.container.querySelectorAll(".focusable.focused").forEach((node) => node.classList.remove("focused"));
+    actionTarget.classList.add("focused");
+    event?.preventDefault?.();
+    void this.activateAction(String(actionTarget.dataset.action || ""));
+    return true;
+  },
+
   onKeyDown(event) {
     if (ScreenUtils.handleDpadNavigation(event, this.container)) {
       return;
@@ -93,13 +118,7 @@ export const AccountScreen = {
     const current = this.container?.querySelector(".focused");
 
     if (event.keyCode === 13 && current) {
-      const action = current.dataset.action;
-      if (action === "signin") {
-        Router.navigate("authQrSignIn");
-      }
-      if (action === "logout") {
-        this.signOut();
-      }
+      void this.activateAction(String(current.dataset.action || ""));
     }
   }
 

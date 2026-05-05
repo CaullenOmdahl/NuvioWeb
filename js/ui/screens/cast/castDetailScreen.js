@@ -145,6 +145,7 @@ export const CastDetailScreen = {
   renderError(message) {
     this.container.innerHTML = `
       <div class="cast-detail-shell">
+        ${this.renderDesktopRouteBackButton()}
         <div class="cast-detail-error">${message}</div>
         <button class="cast-detail-back focusable" data-action="back">Back</button>
       </div>
@@ -173,6 +174,7 @@ export const CastDetailScreen = {
 
     this.container.innerHTML = `
       <div class="cast-detail-shell">
+        ${this.renderDesktopRouteBackButton()}
         <section class="cast-detail-hero">
           <button class="cast-detail-back focusable" data-action="back">Back</button>
           <div class="cast-detail-hero-content">
@@ -340,6 +342,58 @@ export const CastDetailScreen = {
       return true;
     }
     return false;
+  },
+
+  renderDesktopRouteBackButton() {
+    return `
+      <button class="desktop-route-back" type="button" data-mouse-action="goBack" aria-label="Back" title="Back">
+        <span aria-hidden="true">&larr;</span>
+      </button>
+    `;
+  },
+
+  createMouseEnterEvent(sourceEvent) {
+    return {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      repeat: false,
+      preventDefault() {
+        sourceEvent?.preventDefault?.();
+      },
+      stopPropagation() {
+        sourceEvent?.stopPropagation?.();
+      }
+    };
+  },
+
+  activateFocusedWithMouse(event) {
+    const enterEvent = this.createMouseEnterEvent(event);
+    Promise.resolve(this.onKeyDown(enterEvent))
+      .then(() => this.onKeyUp?.(enterEvent))
+      .catch((error) => console.error("Cast detail mouse activation failed", error));
+  },
+
+  onMouseActivate(target, event) {
+    const actionTarget = target?.closest?.("[data-mouse-action], .focusable");
+    if (!actionTarget || !this.container?.contains(actionTarget)) {
+      return false;
+    }
+
+    if (String(actionTarget.dataset?.mouseAction || "") === "goBack") {
+      if (!this.consumeBackRequest()) {
+        Router.back();
+      }
+      return true;
+    }
+
+    if (!actionTarget.classList?.contains("focusable") || !actionTarget.dataset?.action) {
+      return false;
+    }
+
+    this.activateFocusedWithMouse(event);
+    return true;
   },
 
   async onKeyDown(event) {

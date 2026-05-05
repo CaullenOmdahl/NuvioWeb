@@ -145,6 +145,14 @@ export const Platform = {
     return getAdapter().getCapabilities();
   },
 
+  getDisplayScalePercent() {
+    return getAdapter().getDisplayScalePercent?.() || 100;
+  },
+
+  applyDisplayScalePercent(scalePercent, options = {}) {
+    return Boolean(getAdapter().applyDisplayScalePercent?.(scalePercent, options));
+  },
+
   prepareVideoElement(videoElement) {
     return getAdapter().prepareVideoElement?.(videoElement);
   }

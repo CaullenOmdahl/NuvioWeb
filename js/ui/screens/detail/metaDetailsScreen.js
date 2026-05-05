@@ -1358,6 +1358,50 @@ export const MetaDetailsScreen = {
     return false;
   },
 
+  createMouseEnterEvent(sourceEvent) {
+    return {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      repeat: false,
+      preventDefault() {
+        sourceEvent?.preventDefault?.();
+      },
+      stopPropagation() {
+        sourceEvent?.stopPropagation?.();
+      }
+    };
+  },
+
+  activateFocusedWithMouse(event) {
+    const enterEvent = this.createMouseEnterEvent(event);
+    Promise.resolve(this.onKeyDown(enterEvent))
+      .then(() => this.onKeyUp?.(enterEvent))
+      .catch((error) => console.error("Detail mouse activation failed", error));
+  },
+
+  onMouseActivate(target, event) {
+    const actionTarget = target?.closest?.("[data-mouse-action], .focusable");
+    if (!actionTarget || !this.container?.contains(actionTarget)) {
+      return false;
+    }
+
+    if (String(actionTarget.dataset?.mouseAction || "") === "goBack") {
+      if (!this.consumeBackRequest()) {
+        Router.back();
+      }
+      return true;
+    }
+
+    if (!actionTarget.classList?.contains("focusable") || !actionTarget.dataset?.action) {
+      return false;
+    }
+
+    this.activateFocusedWithMouse(event);
+    return true;
+  },
+
   async enrichMeta(meta) {
     const settings = TmdbSettingsStore.get();
     if (!settings.enabled || !settings.apiKey || !meta?.id) {
@@ -1624,6 +1668,15 @@ export const MetaDetailsScreen = {
     });
   },
 
+  renderDesktopRouteBackButton() {
+    const label = escapeAttribute(t("common.back", {}, "Back"));
+    return `
+      <button class="desktop-route-back" type="button" data-mouse-action="goBack" aria-label="${label}" title="${label}">
+        <span aria-hidden="true">&larr;</span>
+      </button>
+    `;
+  },
+
   renderSeriesLayout(meta) {
     const backdrop = meta.background || meta.poster || "";
     if (!this.selectedRatingSeason || !this.seriesRatingsBySeason?.[this.selectedRatingSeason]) {
@@ -1636,6 +1689,7 @@ export const MetaDetailsScreen = {
         <div class="detail-trailer-layer"></div>
         <div class="series-detail-vignette"></div>
         <div class="detail-bottom-shadow"></div>
+        ${this.renderDesktopRouteBackButton()}
 
         <div class="series-detail-content">
           <div id="detailHeroSection">${this.renderSeriesHeroMarkup(meta)}</div>
@@ -1874,6 +1928,7 @@ export const MetaDetailsScreen = {
         <div class="detail-trailer-layer"></div>
         <div class="series-detail-vignette"></div>
         <div class="detail-bottom-shadow"></div>
+        ${this.renderDesktopRouteBackButton()}
 
         <div class="series-detail-content movie-detail-content">
           <div id="detailHeroSection">${this.renderMovieHeroMarkup(meta)}</div>
