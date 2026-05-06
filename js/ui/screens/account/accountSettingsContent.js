@@ -21,8 +21,8 @@
 
         ${this.renderActionButton(
           "assets/icons/trakt_tv_glyph.svg",
-          "Sign in with QR",
-          "Scan a QR code to link this device",
+          "Sign in with email",
+          "Use your Nuvio account directly on this device",
           "signin"
         )}
       `;

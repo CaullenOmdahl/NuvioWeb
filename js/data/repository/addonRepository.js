@@ -1,5 +1,6 @@
 import { safeApiCall } from "../../core/network/safeApiCall.js";
 import { LocalStore } from "../../core/storage/localStore.js";
+import { normalizeAddonInstallUrl } from "../../core/addons/addonUrl.js";
 import { AddonApi } from "../remote/api/addonApi.js";
 
 const ADDON_URLS_KEY = "installedAddonUrls";
@@ -16,11 +17,8 @@ class AddonRepository {
   }
 
   canonicalizeUrl(url) {
-    const trimmed = String(url || "").trim().replace(/\/+$/, "");
-    if (trimmed.endsWith("/manifest.json")) {
-      return trimmed.slice(0, -"/manifest.json".length);
-    }
-    return trimmed;
+    const normalized = normalizeAddonInstallUrl(url);
+    return normalized || String(url || "").trim().replace(/\/+$/, "");
   }
 
   getInstalledAddonUrls() {

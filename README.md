@@ -15,7 +15,8 @@ The desktop changes are intentionally platform-scoped:
 
 - Tauri desktop packaging for local macOS builds and standalone launch.
 - Production-compatible runtime config through `nuvio.env.js`, without committing secret values.
-- Direct email/password login for desktop users, while leaving QR login available for TV-style pairing.
+- Direct email/password login for desktop users, without routing standalone desktop flows through phone pairing.
+- In-app addon management for desktop: install manifest URLs, refresh, reorder, remove, and open home catalog ordering without a QR handoff.
 - Stable desktop display scaling through native Tauri webview zoom plus the existing in-app UI scale preference.
 - Desktop-only compact density rules for TV-sized route panels, stream selection cards, settings rows, and account screens.
 - Mouse-first interaction support: clicked focusables activate like Enter, player controls are clickable, and nested routes expose a desktop back button.
@@ -51,7 +52,7 @@ The same web source can run in:
 - `assets/` - icons, branding, images, and bundled browser libraries.
 - `scripts/` - build, serving, release, and wrapper sync tooling.
 - `src-tauri/` - desktop app shell and native display zoom integration.
-- `tests/` - focused Node test coverage for auth, display scaling, and mouse navigation.
+- `tests/` - focused Node test coverage for auth, add-ons, display scaling, and mouse navigation.
 - `dist/` - generated build output.
 
 ## Requirements
@@ -135,7 +136,7 @@ open -na "src-tauri/target/release/bundle/macos/Nuvio TV.app"
 Before shipping desktop changes, run:
 
 ```bash
-node --test tests/displayScale.test.mjs tests/authManager.test.mjs tests/mouseNavigation.test.mjs
+node --test tests/addonUrl.test.mjs tests/addonsManager.test.mjs tests/desktopStandalone.test.mjs tests/displayScale.test.mjs tests/authManager.test.mjs tests/mouseNavigation.test.mjs
 cd src-tauri && cargo test
 git diff --check
 npm run tauri:build:local
@@ -149,7 +150,7 @@ Also launch the built app and verify:
 - Mouse click opens media, stream cards, settings actions, account actions, and player controls.
 - Desktop back controls return from Detail, Stream Selection, Player, Cast, and See All routes.
 - Email/password login works when `nuvio.env.js` is configured.
-- QR login still remains available for paired-device flows.
+- Addons can be managed directly from the Addons route, including home catalog ordering.
 
 ## TV Wrapper Builds
 

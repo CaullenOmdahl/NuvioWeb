@@ -2,11 +2,14 @@ import { ScreenUtils } from "../../navigation/screen.js";
 import { Router } from "../../navigation/router.js";
 import { addonRepository } from "../../../data/repository/addonRepository.js";
 import { LayoutPreferences } from "../../../data/local/layoutPreferences.js";
+import { HomeCatalogStore } from "../../../data/local/homeCatalogStore.js";
 import { Platform } from "../../../platform/index.js";
-import { QrCodeGenerator } from "../../../core/qr/qrCodeGenerator.js";
-import { ADDON_REMOTE_BASE_URL, PUBLIC_APP_URL } from "../../../config.js";
 import { I18n } from "../../../i18n/index.js";
 import { PluginManager } from "../../../core/player/pluginManager.js";
+import { AuthManager } from "../../../core/auth/authManager.js";
+import { LibrarySyncService } from "../../../core/profile/librarySyncService.js";
+import { buildOrderedCatalogItems } from "../../../core/addons/homeCatalogs.js";
+import { normalizeAddonInstallUrl } from "../../../core/addons/addonUrl.js";
 import {
   activateLegacySidebarAction,
   bindRootSidebarEvents,
@@ -40,120 +43,24 @@ function t(key, fallback = key) {
   return I18n.t(key, {}, { fallback });
 }
 
-function isLoopbackHostname(hostname) {
-  const normalized = String(hostname || "").trim().toLowerCase();
-  return normalized === "localhost"
-    || normalized === "127.0.0.1"
-    || normalized === "0.0.0.0"
-    || normalized === "::1"
-    || normalized === "[::1]";
+function formatResourceSummary(addon) {
+  const resources = Array.isArray(addon?.resources) ? addon.resources : [];
+  const names = Array.from(new Set(resources.map((resource) => String(resource?.name || "").trim()).filter(Boolean)));
+  if (!names.length) {
+    return "No resources declared";
+  }
+  return names.join(", ");
 }
 
-function buildPhoneManagerUrl(base, addonCount) {
-  if (!base) {
-    return "";
-  }
-  const url = new URL(base, window.location.href);
-  url.searchParams.set("addonsRemote", "1");
-  url.hash = "#addons";
-  url.searchParams.set("count", String(Math.max(0, Number(addonCount) || 0)));
-  return url.toString();
+function formatCatalogSummary(addon) {
+  const count = Array.isArray(addon?.catalogs) ? addon.catalogs.length : 0;
+  return `${count} catalog${count === 1 ? "" : "s"}`;
 }
 
-let detectedLanHostPromise = null;
-
-function detectLanHost() {
-  if (detectedLanHostPromise) {
-    return detectedLanHostPromise;
-  }
-
-  detectedLanHostPromise = new Promise((resolve) => {
-    const RtcPeerConnection = globalThis.RTCPeerConnection
-      || globalThis.webkitRTCPeerConnection
-      || globalThis.mozRTCPeerConnection
-      || null;
-
-    if (!RtcPeerConnection) {
-      resolve("");
-      return;
-    }
-
-    let finished = false;
-    const connection = new RtcPeerConnection({ iceServers: [] });
-
-    const finish = (value = "") => {
-      if (finished) {
-        return;
-      }
-      finished = true;
-      try {
-        connection.onicecandidate = null;
-        connection.close();
-      } catch (_) {}
-      resolve(value);
-    };
-
-    const timeoutId = setTimeout(() => finish(""), 2000);
-    const parseCandidate = (candidateText) => {
-      const match = String(candidateText || "").match(/\b((?:\d{1,3}\.){3}\d{1,3})\b/);
-      if (!match) {
-        return;
-      }
-      const ip = String(match[1] || "").trim();
-      if (!ip || isLoopbackHostname(ip)) {
-        return;
-      }
-      clearTimeout(timeoutId);
-      finish(ip);
-    };
-
-    connection.onicecandidate = (event) => {
-      if (!event?.candidate) {
-        return;
-      }
-      parseCandidate(event.candidate.candidate);
-    };
-
-    try {
-      connection.createDataChannel("nuvio-lan");
-      connection.createOffer()
-        .then((offer) => connection.setLocalDescription(offer))
-        .catch(() => {
-          clearTimeout(timeoutId);
-          finish("");
-        });
-    } catch (_) {
-      clearTimeout(timeoutId);
-      finish("");
-    }
-  });
-
-  return detectedLanHostPromise;
-}
-
-async function getPhoneManagerUrl(addonCount) {
-  const wrapperServerBase = String(ADDON_REMOTE_BASE_URL || "").trim();
-  if (wrapperServerBase) {
-    try {
-      const wrapperUrl = new URL(wrapperServerBase, window.location.href);
-      if (!isLoopbackHostname(wrapperUrl.hostname)) {
-        return buildPhoneManagerUrl(wrapperUrl.toString(), addonCount);
-      }
-    } catch (_) {}
-  }
-
-  const currentUrl = new URL(window.location.href);
-  if (!isLoopbackHostname(currentUrl.hostname)) {
-    return buildPhoneManagerUrl(`${currentUrl.origin}${currentUrl.pathname}`, addonCount);
-  }
-
-  const lanHost = await detectLanHost();
-  if (!lanHost) {
-    return "";
-  }
-
-  const port = currentUrl.port ? `:${currentUrl.port}` : "";
-  return buildPhoneManagerUrl(`${currentUrl.protocol}//${lanHost}${port}${currentUrl.pathname}`, addonCount);
+function formatAddonTypes(addon) {
+  const types = Array.isArray(addon?.types) ? addon.types : [];
+  const cleaned = types.map((type) => String(type || "").trim()).filter(Boolean);
+  return cleaned.length ? cleaned.join(", ") : "No media types declared";
 }
 
 export const PluginScreen = {
@@ -169,7 +76,10 @@ export const PluginScreen = {
     this.pillIconOnly = false;
     this.contentRow = Number.isFinite(this.contentRow) ? this.contentRow : 0;
     this.contentCol = Number.isFinite(this.contentCol) ? this.contentCol : 0;
-    this.qrOverlayOpen = false;
+    this.installDraft = this.installDraft || "";
+    this.installError = "";
+    this.operationMessage = "";
+    this.operationIsError = false;
     this.expandedRepoId = this.expandedRepoId || null;
     const [sidebarProfile, model] = await Promise.all([
       getSidebarProfileState(),
@@ -181,12 +91,19 @@ export const PluginScreen = {
   },
 
   async collectModel() {
-    const addonUrls = addonRepository.getInstalledAddonUrls();
     const repositories = PluginManager.listRepositories();
     const scrapers = PluginManager.listScrapers();
+    const [addons, catalogPrefs] = await Promise.all([
+      addonRepository.getInstalledAddons(),
+      Promise.resolve(HomeCatalogStore.get())
+    ]);
+    const catalogItems = buildOrderedCatalogItems(addons, catalogPrefs.order, catalogPrefs.disabled);
+    const addonUrls = addonRepository.getInstalledAddonUrls();
     return {
+      addonUrls,
       addonCount: addonUrls.length,
-      phoneManagerUrl: await getPhoneManagerUrl(addonUrls.length),
+      addons,
+      catalogCount: catalogItems.length,
       repositories,
       scrapers
     };
@@ -237,32 +154,141 @@ export const PluginScreen = {
     }
   },
 
-  renderQrCode() {
-    if (!this.qrOverlayOpen || !this.model.phoneManagerUrl) {
+  async syncAddonChanges() {
+    if (!AuthManager.isAuthenticated) {
       return;
     }
-    const canvas = this.container?.querySelector(".addons-qr-canvas");
-    if (!canvas) {
-      return;
+    try {
+      await LibrarySyncService.push();
+    } catch (error) {
+      console.warn("Addon sync push after local change failed", error);
     }
-    QrCodeGenerator.generate(canvas, this.model.phoneManagerUrl, 440);
   },
 
-  async openQrOverlay() {
-    this.qrOverlayOpen = true;
+  setOperationMessage(message, isError = false) {
+    this.operationMessage = String(message || "");
+    this.operationIsError = Boolean(isError);
+  },
+
+  async installAddonFromInput() {
+    const clean = normalizeAddonInstallUrl(this.installDraft);
+    if (!clean) {
+      this.installError = "Enter a valid http, https, or stremio addon URL.";
+      this.setOperationMessage("", false);
+      await this.render({ refreshModel: false });
+      return;
+    }
+
+    const installed = this.model?.addonUrls || addonRepository.getInstalledAddonUrls();
+    if (installed.includes(clean)) {
+      this.installError = "That addon is already installed.";
+      this.setOperationMessage("", false);
+      await this.render({ refreshModel: false });
+      return;
+    }
+
+    this.installError = "";
+    this.setOperationMessage("Checking addon manifest...", false);
+    await this.render({ refreshModel: false });
+
+    const result = await addonRepository.fetchAddon(clean);
+    if (result.status !== "success") {
+      this.installError = result.message || "Unable to load that addon manifest.";
+      this.setOperationMessage("", false);
+      await this.render({ refreshModel: false });
+      return;
+    }
+
+    const added = await addonRepository.addAddon(clean);
+    if (added === false) {
+      this.installError = "That addon is already installed.";
+      this.setOperationMessage("", false);
+      await this.render({ refreshModel: false });
+      return;
+    }
+
+    await this.syncAddonChanges();
+    this.installDraft = "";
+    this.installError = "";
+    this.setOperationMessage(`${result.data?.displayName || result.data?.name || "Addon"} installed.`, false);
+    await this.render();
+  },
+
+  async refreshAddon(index) {
+    const addon = this.model?.addons?.[index] || null;
+    if (!addon) {
+      return;
+    }
+    const result = await addonRepository.refreshAddon(addon.baseUrl);
+    if (result.status === "success") {
+      this.setOperationMessage(`${result.data?.displayName || addon.displayName || addon.name || "Addon"} refreshed.`, false);
+      await this.render();
+      return;
+    }
+    this.setOperationMessage(result.message || "Unable to refresh addon.", true);
     await this.render({ refreshModel: false });
   },
 
-  async closeQrOverlay() {
-    if (!this.qrOverlayOpen) {
-      return false;
+  async removeAddon(index) {
+    const addon = this.model?.addons?.[index] || null;
+    if (!addon) {
+      return;
     }
-    this.qrOverlayOpen = false;
+    const removed = await addonRepository.removeAddon(addon.baseUrl);
+    if (removed) {
+      await this.syncAddonChanges();
+      this.contentRow = Math.max(0, this.contentRow - 1);
+      this.setOperationMessage(`${addon.displayName || addon.name || "Addon"} removed.`, false);
+      await this.render();
+      return;
+    }
+    this.setOperationMessage("Unable to remove addon.", true);
     await this.render({ refreshModel: false });
-    return true;
+  },
+
+  async moveAddon(index, delta) {
+    const addons = this.model?.addons || [];
+    const addon = addons[index] || null;
+    if (!addon) {
+      return;
+    }
+
+    const urls = this.model?.addonUrls || addonRepository.getInstalledAddonUrls();
+    const sourceIndex = urls.indexOf(addon.baseUrl);
+    const nextIndex = sourceIndex + delta;
+    if (sourceIndex < 0 || nextIndex < 0 || nextIndex >= urls.length) {
+      return;
+    }
+
+    const next = [...urls];
+    const moved = next.splice(sourceIndex, 1)[0];
+    next.splice(nextIndex, 0, moved);
+    await addonRepository.setAddonOrder(next);
+    await this.syncAddonChanges();
+    this.contentRow = Math.max(0, this.contentRow + delta);
+    this.setOperationMessage(`${addon.displayName || addon.name || "Addon"} reordered.`, false);
+    await this.render();
   },
 
   bindContentEvents() {
+    const installInput = this.container.querySelector(".addons-install-input");
+    if (installInput) {
+      installInput.addEventListener("input", (event) => {
+        this.installDraft = String(event.target?.value || "");
+        if (this.installError) {
+          this.installError = "";
+        }
+      });
+      installInput.addEventListener("keydown", async (event) => {
+        if (event.key === "Enter" || Number(event.keyCode || 0) === 13) {
+          event.preventDefault();
+          event.stopPropagation();
+          this.installDraft = String(installInput.value || "");
+          await this.installAddonFromInput();
+        }
+      });
+    }
+
     this.container.querySelectorAll(".addons-focusable[data-action-id]").forEach((node) => {
       node.addEventListener("click", async () => {
         this.focusZone = "content";
@@ -272,17 +298,95 @@ export const PluginScreen = {
         await this.activateFocused();
       });
     });
-
-    this.container.querySelector(".addons-qr-close")?.addEventListener("click", async () => {
-      await this.closeQrOverlay();
-    });
   },
 
-  buildRepositoryRows() {
+  buildAddonRows(startRow) {
+    const addons = this.model?.addons || [];
+    if (!addons.length) {
+      return {
+        html: '<div class="addons-empty">No addons installed. Paste an addon manifest URL above to install one.</div>',
+        nextRow: startRow
+      };
+    }
+
+    let currentRow = startRow;
+    const html = addons.map((addon, index) => {
+      const row = currentRow++;
+      const refreshAction = `addon_refresh_${index}`;
+      const moveUpAction = `addon_move_up_${index}`;
+      const moveDownAction = `addon_move_down_${index}`;
+      const removeAction = `addon_remove_${index}`;
+      const canMoveUp = index > 0;
+      const canMoveDown = index < addons.length - 1;
+      const cols = [0];
+      if (canMoveUp) cols.push(1);
+      if (canMoveDown) cols.push(2);
+      cols.push(3);
+      this.setRowColumns(row, cols);
+
+      this.actionMap.set(refreshAction, () => this.refreshAddon(index));
+      this.actionMap.set(moveUpAction, () => this.moveAddon(index, -1));
+      this.actionMap.set(moveDownAction, () => this.moveAddon(index, 1));
+      this.actionMap.set(removeAction, () => this.removeAddon(index));
+
+      return `
+        <article class="addons-installed-card">
+          <div class="addons-installed-head">
+            <div class="addons-installed-copy">
+              <h3>${escapeHtml(addon.displayName || addon.name || addon.baseUrl)}</h3>
+              <p class="addons-installed-version">${escapeHtml(`v${addon.version || "0.0.0"}`)}</p>
+            </div>
+            <div class="addons-installed-actions">
+              <button type="button"
+                      class="addons-action-btn addons-focusable"
+                      data-zone="content"
+                      data-row="${row}"
+                      data-col="0"
+                      data-action-id="${escapeHtml(refreshAction)}"
+                      tabindex="-1"
+                      aria-label="Refresh ${escapeHtml(addon.displayName || addon.name || "addon")}">
+                <span class="material-icons" aria-hidden="true">refresh</span>
+              </button>
+              <button type="button"
+                      class="addons-action-btn${canMoveUp ? " addons-focusable" : " is-disabled"}"
+                      ${canMoveUp ? `data-zone="content" data-row="${row}" data-col="1" data-action-id="${escapeHtml(moveUpAction)}"` : 'aria-disabled="true"'}
+                      tabindex="-1"
+                      aria-label="Move ${escapeHtml(addon.displayName || addon.name || "addon")} up">
+                <span class="material-icons" aria-hidden="true">arrow_upward</span>
+              </button>
+              <button type="button"
+                      class="addons-action-btn${canMoveDown ? " addons-focusable" : " is-disabled"}"
+                      ${canMoveDown ? `data-zone="content" data-row="${row}" data-col="2" data-action-id="${escapeHtml(moveDownAction)}"` : 'aria-disabled="true"'}
+                      tabindex="-1"
+                      aria-label="Move ${escapeHtml(addon.displayName || addon.name || "addon")} down">
+                <span class="material-icons" aria-hidden="true">arrow_downward</span>
+              </button>
+              <button type="button"
+                      class="addons-action-btn addons-remove-btn addons-focusable"
+                      data-zone="content"
+                      data-row="${row}"
+                      data-col="3"
+                      data-action-id="${escapeHtml(removeAction)}"
+                      tabindex="-1">
+                Remove
+              </button>
+            </div>
+          </div>
+          ${addon.description ? `<p class="addons-installed-description">${escapeHtml(addon.description)}</p>` : ""}
+          <p class="addons-installed-meta">${escapeHtml(addon.baseUrl)}</p>
+          <p class="addons-installed-meta">${escapeHtml(`${formatCatalogSummary(addon)} - ${formatResourceSummary(addon)} - ${formatAddonTypes(addon)}`)}</p>
+        </article>
+      `;
+    }).join("");
+
+    return { html, nextRow: currentRow };
+  },
+
+  buildRepositoryRows(startRow) {
     const repos = this.model.repositories || [];
     const scrapers = this.model.scrapers || [];
     let html = "";
-    let currentRow = 2; // rows 0 and 1 are taken by hero card and add-repo button
+    let currentRow = startRow;
 
     for (const repo of repos) {
       const repoScrapers = scrapers.filter((s) => s.repositoryId === repo.id);
@@ -294,7 +398,9 @@ export const PluginScreen = {
       this.actionMap.set(`repo_refresh_${repo.id}`, async () => {
         try {
           await PluginManager.refreshRepository(repo.id);
+          this.setOperationMessage(`${repo.name || repo.url} refreshed.`, false);
         } catch (err) {
+          this.setOperationMessage("Failed to refresh repository.", true);
           console.warn("Failed to refresh repository:", err);
         }
         await this.render();
@@ -308,7 +414,9 @@ export const PluginScreen = {
       this.actionMap.set(`repo_remove_${repo.id}`, async () => {
         try {
           PluginManager.removeRepository(repo.id);
+          this.setOperationMessage(`${repo.name || repo.url} removed.`, false);
         } catch (err) {
+          this.setOperationMessage("Failed to remove repository.", true);
           console.warn("Failed to remove repository:", err);
         }
         if (this.expandedRepoId === repo.id) {
@@ -372,7 +480,9 @@ export const PluginScreen = {
           this.actionMap.set(`scraper_toggle_${scraper.id}`, async () => {
             try {
               PluginManager.setScraperEnabled(scraper.id, !scraper.enabled);
+              this.setOperationMessage(`${scraper.name || scraper.id} ${scraper.enabled ? "disabled" : "enabled"}.`, false);
             } catch (err) {
+              this.setOperationMessage("Failed to toggle scraper.", true);
               console.warn("Failed to toggle scraper:", err);
             }
             await this.render();
@@ -403,7 +513,7 @@ export const PluginScreen = {
       }
     }
 
-    return html;
+    return { html, nextRow: currentRow };
   },
 
   async render({ refreshModel = true } = {}) {
@@ -412,13 +522,21 @@ export const PluginScreen = {
     }
     this.rowColumns = new Map();
     this.actionMap = new Map();
-    this.setRowColumns(0, [0]);
+    this.setRowColumns(0, [0, 1]);
     this.setRowColumns(1, [0]);
-    const manageFromPhonePlanned = true;
 
-    this.actionMap.set("manage_from_phone", async () => {});
-    this.actionMap.set("close_qr_overlay", async () => {
-      await this.closeQrOverlay();
+    this.actionMap.set("install_input", async () => {
+      const input = this.container.querySelector(".addons-install-input");
+      input?.focus();
+      input?.select?.();
+    });
+    this.actionMap.set("install_addon", async () => {
+      const input = this.container.querySelector(".addons-install-input");
+      this.installDraft = String(input?.value || this.installDraft || "");
+      await this.installAddonFromInput();
+    });
+    this.actionMap.set("open_catalog_order", async () => {
+      Router.navigate("catalogOrder");
     });
     this.actionMap.set("add_repository", async () => {
       const url = prompt("Enter plugin repository URL:");
@@ -427,13 +545,19 @@ export const PluginScreen = {
       }
       try {
         await PluginManager.addRepository(url.trim());
+        this.setOperationMessage("Plugin repository added.", false);
       } catch (err) {
+        this.setOperationMessage("Failed to add plugin repository.", true);
         console.warn("Failed to add repository:", err);
       }
       await this.render();
     });
 
-    const repoRowsHtml = this.buildRepositoryRows();
+    const addonRows = this.buildAddonRows(2);
+    this.setRowColumns(addonRows.nextRow, [0]);
+    const repositoryRows = this.buildRepositoryRows(addonRows.nextRow + 1);
+    const addonCountLabel = `${this.model.addonCount} addon${this.model.addonCount === 1 ? "" : "s"} installed`;
+    const catalogCountLabel = `${this.model.catalogCount} home catalog${this.model.catalogCount === 1 ? "" : "s"} available`;
 
     this.container.innerHTML = `
       <div class="home-shell addons-shell${this.pluginRouteEnterPending ? " addons-route-enter" : ""}">
@@ -444,67 +568,90 @@ export const PluginScreen = {
           expanded: Boolean(this.sidebarExpanded),
           pillIconOnly: Boolean(this.pillIconOnly)
         })}
-        <main class="home-main addons-main addons-main-centered">
-          <div class="addons-panel addons-panel-centered">
+        <main class="home-main addons-main">
+          <div class="addons-panel">
             <section class="addons-hero-card">
-              <h1 class="addons-title addons-title-centered">Addons</h1>
+              <p class="addons-kicker">Standalone management</p>
+              <h1 class="addons-title">Addons</h1>
               <p class="addons-lede">
-                Manage addons and home catalogs from your phone.
+                Install and organize Stremio-compatible addons directly in this app.
               </p>
-              <p class="addons-meta">${escapeHtml(`${this.model.addonCount} addon${this.model.addonCount === 1 ? "" : "s"} currently linked`)}</p>
-              <button type="button"
-                      class="addons-large-row addons-large-row-centered addons-focusable${manageFromPhonePlanned ? " is-disabled is-planned" : ""}"
-                      data-zone="content"
-                      data-row="0"
-                      data-col="0"
-                      data-action-id="manage_from_phone"
-                      tabindex="-1">
-                <span class="addons-large-row-icon material-icons" aria-hidden="true">qr_code_2</span>
-                <span class="addons-large-row-copy">
-                  <strong>Manage addons</strong>
-                  <small>Manage addons and home catalogs from your phone</small>
-                </span>
-                <span class="addons-large-row-tail-group">
-                  ${manageFromPhonePlanned ? `<span class="addons-large-row-badge">${escapeHtml(t("common.soon", "Soon"))}</span>` : ""}
-                  <span class="addons-large-row-tail material-icons" aria-hidden="true">phone_android</span>
-                </span>
-              </button>
+              <p class="addons-meta">${escapeHtml(`${addonCountLabel} - ${catalogCountLabel}`)}</p>
+              ${this.operationMessage ? `<p class="${this.operationIsError ? "addons-install-error" : "addons-meta"}">${escapeHtml(this.operationMessage)}</p>` : ""}
             </section>
 
-            <section class="addons-repos-section">
-              <h2 class="addons-section-title">Plugin Repositories</h2>
+            <section class="addons-install-card">
+              <h2 class="addons-install-heading">Install Addon</h2>
+              <div class="addons-install-row">
+                <label class="addons-install-surface addons-focusable"
+                       data-zone="content"
+                       data-row="0"
+                       data-col="0"
+                       data-action-id="install_input">
+                  <input class="addons-install-input"
+                         type="url"
+                         value="${escapeHtml(this.installDraft)}"
+                         placeholder="https://example.com/manifest.json"
+                         autocomplete="off"
+                         spellcheck="false" />
+                </label>
+                <button type="button"
+                        class="addons-install-btn addons-focusable"
+                        data-zone="content"
+                        data-row="0"
+                        data-col="1"
+                        data-action-id="install_addon"
+                        tabindex="-1">Add</button>
+              </div>
+              <div class="addons-install-error">${escapeHtml(this.installError)}</div>
+            </section>
+
+            <section>
               <button type="button"
                       class="addons-large-row addons-focusable"
                       data-zone="content"
                       data-row="1"
+                      data-col="0"
+                      data-action-id="open_catalog_order"
+                      tabindex="-1">
+                <span class="addons-large-row-icon material-icons" aria-hidden="true">view_agenda</span>
+                <span class="addons-large-row-copy">
+                  <strong>Home Catalogs</strong>
+                  <small>Reorder catalog rows and enable or disable Home sections</small>
+                </span>
+                <span class="addons-large-row-tail-group">
+                  <span class="addons-large-row-badge">${escapeHtml(String(this.model.catalogCount || 0))}</span>
+                  <span class="addons-large-row-tail material-icons" aria-hidden="true">chevron_right</span>
+                </span>
+              </button>
+            </section>
+
+            <section>
+              <h2 class="addons-subtitle">Installed Addons</h2>
+              <div class="addons-installed-list">
+                ${addonRows.html}
+              </div>
+            </section>
+
+            <section class="addons-repos-section">
+              <h2 class="addons-subtitle">Plugin Repositories</h2>
+              <button type="button"
+                      class="addons-large-row addons-focusable"
+                      data-zone="content"
+                      data-row="${addonRows.nextRow}"
                       data-col="0"
                       data-action-id="add_repository"
                       tabindex="-1">
                 <span class="addons-large-row-icon material-icons" aria-hidden="true">add_circle_outline</span>
                 <span class="addons-large-row-copy">
                   <strong>Add Repository</strong>
-                  <small>Enter a plugin repository URL</small>
+                  <small>Enter a plugin repository URL for scraper plugins</small>
                 </span>
               </button>
-              ${repoRowsHtml}
+              ${repositoryRows.html}
             </section>
           </div>
         </main>
-        ${this.qrOverlayOpen ? `
-          <div class="addons-qr-overlay">
-            <div class="addons-qr-dialog">
-              <p class="addons-qr-instruction">Manage addons and home catalogs from your phone</p>
-              ${this.model.phoneManagerUrl
-                ? '<canvas class="addons-qr-canvas" width="440" height="440" aria-label="QR code"></canvas>'
-                : '<div class="addons-qr-error">Open the app from a phone-reachable `http(s)` address or set `ADDON_REMOTE_BASE_URL` in the wrapper.</div>'}
-              ${this.model.phoneManagerUrl ? `<p class="addons-qr-url">${escapeHtml(this.model.phoneManagerUrl)}</p>` : ""}
-              <button type="button" class="addons-qr-close addons-focusable focused" data-action-id="close_qr_overlay">
-                <span class="material-icons" aria-hidden="true">close</span>
-                <span>Close</span>
-              </button>
-            </div>
-          </div>
-        ` : ""}
       </div>
     `;
     this.pluginRouteEnterPending = false;
@@ -517,20 +664,10 @@ export const PluginScreen = {
     this.bindContentEvents();
     this.normalizeFocus();
     this.applyFocus();
-    this.renderQrCode();
   },
 
   applyFocus() {
     this.container.querySelectorAll(".addons-focusable.focused, .focusable.focused").forEach((node) => node.classList.remove("focused"));
-
-    if (this.qrOverlayOpen) {
-      const closeButton = this.container.querySelector(".addons-qr-close");
-      if (closeButton) {
-        closeButton.classList.add("focused");
-        closeButton.focus();
-      }
-      return;
-    }
 
     if (this.focusZone === "sidebar") {
       const sidebarNodes = this.layoutPrefs?.modernSidebar ? getModernSidebarNodes(this.container) : getLegacySidebarNodes(this.container);
@@ -638,26 +775,22 @@ export const PluginScreen = {
   },
 
   consumeBackRequest() {
-    if (!this.qrOverlayOpen) {
-      return false;
-    }
-    this.closeQrOverlay();
-    return true;
+    return false;
   },
 
   async onKeyDown(event) {
-    if (this.qrOverlayOpen) {
-      if (Platform.isBackEvent(event)) {
-        event?.preventDefault?.();
-        await this.closeQrOverlay();
-        return;
-      }
-      const code = Number(event?.keyCode || 0);
+    const activeElement = document.activeElement;
+    const code = Number(event?.keyCode || 0);
+    if (activeElement?.matches?.(".addons-install-input")) {
       if (code === 13) {
         event?.preventDefault?.();
-        await this.closeQrOverlay();
+        this.installDraft = String(activeElement.value || "");
+        await this.installAddonFromInput();
+        return;
       }
-      return;
+      if (![37, 38, 39, 40].includes(code) && !Platform.isBackEvent(event)) {
+        return;
+      }
     }
 
     if (Platform.isBackEvent(event)) {
@@ -670,7 +803,6 @@ export const PluginScreen = {
       return;
     }
 
-    const code = Number(event?.keyCode || 0);
     if (this.layoutPrefs?.modernSidebar && !this.sidebarExpanded) {
       if (code === 40) {
         this.pillIconOnly = true;

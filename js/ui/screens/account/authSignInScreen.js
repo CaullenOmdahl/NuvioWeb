@@ -3,6 +3,7 @@ import { ScreenUtils } from "../../navigation/screen.js";
 import { AuthManager } from "../../../core/auth/authManager.js";
 import { LocalStore } from "../../../core/storage/localStore.js";
 import { I18n } from "../../../i18n/index.js";
+import { Platform } from "../../../platform/index.js";
 
 function t(key, fallback) {
   return I18n.t(key, {}, { fallback: fallback || key });
@@ -19,7 +20,19 @@ export const AuthSignInScreen = {
     this.render();
   },
 
+  shouldShowQrLogin() {
+    return !Platform.isDesktop();
+  },
+
+  openQrLogin() {
+    if (!this.shouldShowQrLogin()) {
+      return;
+    }
+    Router.navigate("authQrSignIn");
+  },
+
   render() {
+    const showQrLogin = this.shouldShowQrLogin();
     this.container.innerHTML = `
       <div class="auth-email-layout">
         <section class="auth-email-brand-panel">
@@ -71,9 +84,9 @@ export const AuthSignInScreen = {
               <button type="button" id="email-submit-btn" class="auth-email-primary-btn focusable" data-action="submit"${this.isSubmitting ? " disabled" : ""}>
                 ${this.isSubmitting ? t("auth.email.signingIn", "Signing in...") : t("auth.email.signIn", "Sign In")}
               </button>
-              <button type="button" id="email-qr-btn" class="auth-email-secondary-btn focusable" data-action="qrLogin">
+              ${showQrLogin ? `<button type="button" id="email-qr-btn" class="auth-email-secondary-btn focusable" data-action="qrLogin">
                 ${t("auth.email.useQrCode", "Use QR Code")}
-              </button>
+              </button>` : ""}
               <button type="button" id="email-back-btn" class="auth-email-secondary-btn focusable" data-action="back">
                 ${t("auth.email.continueAsGuest", "Continue as Guest")}
               </button>
@@ -129,7 +142,9 @@ export const AuthSignInScreen = {
 
     // Button clicks
     this.container.querySelector("#email-submit-btn")?.addEventListener("click", () => this.handleSubmit());
-    this.container.querySelector("#email-qr-btn")?.addEventListener("click", () => Router.navigate("authQrSignIn"));
+    if (this.shouldShowQrLogin()) {
+      this.container.querySelector("#email-qr-btn")?.addEventListener("click", () => this.openQrLogin());
+    }
     this.container.querySelector("#email-back-btn")?.addEventListener("click", () => this.handleGuestContinue());
   },
 
@@ -253,7 +268,7 @@ export const AuthSignInScreen = {
       if (action === "submit") {
         this.handleSubmit();
       } else if (action === "qrLogin") {
-        Router.navigate("authQrSignIn");
+        this.openQrLogin();
       } else if (action === "back") {
         this.handleGuestContinue();
       } else if (action === "emailInput" || action === "passwordInput") {

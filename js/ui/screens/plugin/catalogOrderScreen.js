@@ -122,6 +122,14 @@ export const CatalogOrderScreen = {
     await this.render();
   },
 
+  renderDesktopRouteBackButton() {
+    return `
+      <button class="desktop-route-back" type="button" data-mouse-action="goBack" aria-label="Back" title="Back">
+        <span aria-hidden="true">&larr;</span>
+      </button>
+    `;
+  },
+
   async render() {
     this.model = await this.collectModel();
     this.rowColumns = new Map();
@@ -168,6 +176,7 @@ export const CatalogOrderScreen = {
 
     this.container.innerHTML = `
       <div class="catalog-order-shell">
+        ${this.renderDesktopRouteBackButton()}
         <main class="catalog-order-main">
           <h1 class="catalog-order-title">Reorder Home Catalogs</h1>
           <p class="catalog-order-subtitle">This controls catalog row order on Home (Classic + Modern + Grid).</p>
@@ -205,6 +214,31 @@ export const CatalogOrderScreen = {
     } else if (action === "toggle") {
       await this.toggleItem(String(current.dataset.disableKey || ""));
     }
+  },
+
+  activateFocusedWithMouse(event) {
+    event?.preventDefault?.();
+    Promise.resolve(this.activateFocused())
+      .catch((error) => console.error("Catalog order mouse activation failed", error));
+  },
+
+  onMouseActivate(target, event) {
+    const actionTarget = target?.closest?.("[data-mouse-action], .catalog-order-focusable[data-action]");
+    if (!actionTarget || !this.container?.contains(actionTarget)) {
+      return false;
+    }
+
+    if (String(actionTarget.dataset?.mouseAction || "") === "goBack") {
+      event?.preventDefault?.();
+      Router.back();
+      return true;
+    }
+
+    this.focusRow = Number(actionTarget.dataset.row || 0);
+    this.focusCol = Number(actionTarget.dataset.col || 0);
+    this.applyFocus();
+    this.activateFocusedWithMouse(event);
+    return true;
   },
 
   moveFocus(deltaRow, deltaCol = 0) {

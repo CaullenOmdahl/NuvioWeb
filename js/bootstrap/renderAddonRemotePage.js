@@ -2,6 +2,7 @@ import { AuthManager } from "../core/auth/authManager.js";
 import { addonRepository } from "../data/repository/addonRepository.js";
 import { HomeCatalogStore } from "../data/local/homeCatalogStore.js";
 import { buildOrderedCatalogItems, toDisplayTypeLabel } from "../core/addons/homeCatalogs.js";
+import { normalizeAddonInstallUrl } from "../core/addons/addonUrl.js";
 import { LibrarySyncService } from "../core/profile/librarySyncService.js";
 
 function escapeHtml(value) {
@@ -11,23 +12,6 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
-}
-
-function normalizeAddonUrl(input) {
-  let trimmed = String(input || "").trim();
-  if (!trimmed) {
-    return "";
-  }
-  if (trimmed.startsWith("stremio://")) {
-    trimmed = trimmed.replace(/^stremio:\/\//i, "https://");
-  }
-  if (!/^https?:\/\//i.test(trimmed)) {
-    return "";
-  }
-  if (trimmed.endsWith("/manifest.json")) {
-    trimmed = trimmed.slice(0, -"/manifest.json".length);
-  }
-  return trimmed.replace(/\/+$/, "");
 }
 
 function clonePrefs(prefs = {}) {
@@ -285,7 +269,7 @@ const AddonRemotePage = {
   },
 
   async addAddon() {
-    const normalizedUrl = normalizeAddonUrl(this.addonDraft);
+    const normalizedUrl = normalizeAddonInstallUrl(this.addonDraft);
     if (!normalizedUrl) {
       this.addError = "Enter a valid http or https addon URL.";
       this.render();
@@ -461,7 +445,7 @@ const AddonRemotePage = {
     const infoBanner = this.authReady
       ? (AuthManager.isAuthenticated
         ? "Signed in. Addon changes can be pushed through the web sync backend. Home catalog changes stay local to this web install."
-        : "Signed out. Changes save only in this browser unless you sign in on this phone.")
+        : "Signed out. Changes save only in this browser unless you sign in here.")
       : "Checking account state...";
 
     const addonCards = this.draftAddons.length
@@ -507,7 +491,7 @@ const AddonRemotePage = {
     this.root.innerHTML = `
       <header class="addon-remote-header">
         <h1>Addons</h1>
-        <p>Manage addons and home catalogs from your phone.</p>
+        <p>Manage addons and home catalogs on this device.</p>
         <div class="addon-remote-banner${AuthManager.isAuthenticated ? "" : " is-warn"}">${escapeHtml(infoBanner)}</div>
       </header>
 

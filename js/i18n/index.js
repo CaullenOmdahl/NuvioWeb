@@ -148,8 +148,6 @@ const KEY_ALIASES = {
   "settings.playback.preferredAudio.title": "audio_preferred_lang",
   "settings.playback.subtitleLanguage.title": "sub_preferred_lang",
   "settings.plugins.addRepository": "plugin_add_repository",
-  "settings.plugins.manageFromPhone": "plugin_manage_from_phone_title",
-  "settings.plugins.manageFromPhoneSubtitle": "plugin_manage_from_phone_subtitle",
   "settings.plugins.providersHeading": "plugin_providers_section",
   "settings.plugins.repositoriesHeading": "plugin_repositories_section",
   "settings.profiles.manageProfiles": "profile_manage_title",
