@@ -7,6 +7,7 @@ node_modules/
 *.ipk
 
 appinfo.json
+!appinfo.json
 
 webOSTVjs-1.2.12/*
 

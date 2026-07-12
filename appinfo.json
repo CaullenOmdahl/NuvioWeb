@@ -1,0 +1,14 @@
+{
+  "id": "com.caullen.nuvio.legacy",
+  "version": "0.1.5",
+  "vendor": "CaullenOmdahl",
+  "type": "web",
+  "main": "index.html",
+  "title": "Nuvio Legacy TV",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "requiredPermissions": [
+    "internet",
+    "private.security"
+  ]
+}

@@ -14,8 +14,8 @@ function hasPackageArg(args) {
 }
 
 async function resolveDefaultPackagePath() {
-  const { version } = await readAppMetadata();
-  const packagePath = path.join(rootDir, `com.nuvio.lg_${version}_all.ipk`);
+  const { id, version } = await readAppMetadata();
+  const packagePath = path.join(rootDir, `${id}_${version}_all.ipk`);
   try {
     await access(packagePath, fsConstants.R_OK);
   } catch {

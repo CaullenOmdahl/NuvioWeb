@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const packageJsonPath = path.join(rootDir, "package.json");
+const appInfoPath = path.join(rootDir, "appinfo.json");
 const versionManagedJsonPaths = [
-  path.join(rootDir, "appinfo.json"),
+  appInfoPath,
   path.join(rootDir, "services", "com.nuvio.lg.service", "package.json"),
   path.join(rootDir, "services", "com.nuvio.tizen.service", "package.json")
 ];
@@ -21,8 +22,11 @@ async function writeJson(filePath, value) {
 
 export async function readAppMetadata() {
   const packageJson = await readJson(packageJsonPath);
+  const appInfo = await readJson(appInfoPath).catch(() => ({}));
   return {
+    id: String(appInfo?.id || "").trim(),
     name: String(packageJson?.name || "").trim(),
+    title: String(appInfo?.title || "Nuvio TV").trim() || "Nuvio TV",
     version: String(packageJson?.version || "0.0.0").trim() || "0.0.0"
   };
 }
