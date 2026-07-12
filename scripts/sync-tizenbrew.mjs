@@ -26,7 +26,7 @@ const defaultEnvFileContents = `(function bootstrapTizenEnv() {
       ADDON_REMOTE_BASE_URL: "",
       DEBUG_LOG_ENDPOINT: "",
       ENABLE_REMOTE_WRAPPER_MODE: false,
-      PREFERRED_PLAYBACK_ORDER: ["native-hls", "hls.js", "dash.js", "native-file", "platform-avplay"],
+      PREFERRED_PLAYBACK_ORDER: ["native-hls", "native-dash", "native-file", "hls.js", "dash.js", "platform-avplay"],
       TMDB_API_KEY: ""
     }, root.__NUVIO_ENV__ || {});
   }

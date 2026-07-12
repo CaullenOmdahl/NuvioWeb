@@ -1,9 +1,9 @@
 {
-  "id": "com.nuvio.lg.service",
+  "id": "com.caullen.nuvio.legacy.service",
   "description": "Local media helper service for webOS playback",
   "services": [
     {
-      "name": "com.nuvio.lg.service",
+      "name": "com.caullen.nuvio.legacy.service",
       "description": "Boots the local media runtime and exposes health checks",
       "commands": [
         {

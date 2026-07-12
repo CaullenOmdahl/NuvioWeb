@@ -1,11 +1,11 @@
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readAppMetadata } from "./appMetadata.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const compatPath = path.join(__dirname, "node24-ares-compat.cjs");
-const defaultAppId = "com.nuvio.lg";
 
 function findExecutable(command) {
   const result = spawnSync("which", [command], {
@@ -49,6 +49,7 @@ function runAresInspect(args) {
 
 async function main() {
   const args = process.argv.slice(2);
+  const { id: defaultAppId } = await readAppMetadata();
   const inspectArgs = hasAppOrServiceArg(args)
     ? args
     : [defaultAppId, ...args];

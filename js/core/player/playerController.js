@@ -6,8 +6,10 @@ import { nativeVideoEngine } from "./engines/nativeVideoEngine.js";
 import { hlsJsEngine } from "./engines/hlsJsEngine.js";
 import { dashJsEngine } from "./engines/dashJsEngine.js";
 import { resolvePlatformAvplayEngine } from "./engines/platformAvplayEngine.js";
+import { orderPlaybackEngineCandidates } from "./playbackEngineOrder.js";
 import { WebOsLunaService } from "../../platform/webos/webosLunaService.js";
 import { loadStreamingLibs } from "../../runtime/loadStreamingLibs.js";
+import { PREFERRED_PLAYBACK_ORDER } from "../../config.js";
 
 const MIN_PROGRESS_SYNC_DURATION_MS = 60000;
 
@@ -1126,6 +1128,14 @@ export const PlayerController = {
       || normalized === "stream";
   },
 
+  orderPlaybackEngineCandidates(candidates) {
+    return orderPlaybackEngineCandidates(
+      candidates,
+      PREFERRED_PLAYBACK_ORDER,
+      this.getPlatformAvplayEngineName()
+    );
+  },
+
   getPlaybackEngineCandidates(url, sourceType = null, itemType = this.currentItemType) {
     const normalizedSourceType = String(sourceType || this.guessMediaMimeType(url) || "").trim();
     const avplayEngine = this.getPlatformAvplayEngineName();
@@ -1162,7 +1172,7 @@ export const PlayerController = {
       if (canUseAvPlay) {
         pushCandidate(candidates, avplayEngine);
       }
-      return candidates;
+      return this.orderPlaybackEngineCandidates(candidates);
     }
 
     if (this.isLikelyDashMimeType(normalizedSourceType)) {
@@ -1185,7 +1195,7 @@ export const PlayerController = {
       if (canUseAvPlay) {
         pushCandidate(candidates, avplayEngine);
       }
-      return candidates;
+      return this.orderPlaybackEngineCandidates(candidates);
     }
 
     if (this.isLikelySmoothStreamingMimeType(normalizedSourceType)) {
@@ -1196,7 +1206,7 @@ export const PlayerController = {
       if (canUseAvPlay) {
         pushCandidate(candidates, avplayEngine);
       }
-      return candidates;
+      return this.orderPlaybackEngineCandidates(candidates);
     }
 
     const candidates = [];
@@ -1210,7 +1220,7 @@ export const PlayerController = {
     if (isTizenRuntime && canUseAvPlay) {
       pushCandidate(candidates, avplayEngine);
     }
-    return candidates;
+    return this.orderPlaybackEngineCandidates(candidates);
   },
 
   getAlternativePlaybackEngine(url = this.currentPlaybackUrl, sourceType = this.currentPlaybackMediaSourceType, itemType = this.currentItemType) {
@@ -2032,8 +2042,12 @@ export const PlayerController = {
     if (!normalizedSourceType) {
       return;
     }
-    if (this.isLikelyHlsMimeType(normalizedSourceType) || this.isLikelyDashMimeType(normalizedSourceType)) {
-      await loadStreamingLibs();
+    if (this.isLikelyHlsMimeType(normalizedSourceType)) {
+      await loadStreamingLibs({ kinds: ["hls"] });
+      return;
+    }
+    if (this.isLikelyDashMimeType(normalizedSourceType)) {
+      await loadStreamingLibs({ kinds: ["dash"] });
     }
   },
 

@@ -31,7 +31,7 @@ if (!Object.fromEntries) {
   Object.fromEntries = function fromEntries(entries) {
     var result = {};
     if (!entries) return result;
-    
+
     var arr = Array.isArray(entries) ? entries : Array.from(entries);
     for (var i = 0; i < arr.length; i++) {
       var entry = arr[i];
@@ -40,6 +40,25 @@ if (!Object.fromEntries) {
       }
     }
     return result;
+  };
+}
+
+if (!Object.getOwnPropertyDescriptors) {
+  Object.getOwnPropertyDescriptors = function getOwnPropertyDescriptors(value) {
+    var object = Object(value);
+    var descriptors = {};
+
+    Object.getOwnPropertyNames(object).forEach(function (name) {
+      descriptors[name] = Object.getOwnPropertyDescriptor(object, name);
+    });
+
+    if (typeof Object.getOwnPropertySymbols === "function") {
+      Object.getOwnPropertySymbols(object).forEach(function (symbol) {
+        descriptors[symbol] = Object.getOwnPropertyDescriptor(object, symbol);
+      });
+    }
+
+    return descriptors;
   };
 }
 
@@ -137,12 +156,50 @@ if (!Array.prototype.flatMap) {
   });
 }
 
+function installTypedArrayForEachPolyfill(TypedArrayConstructor) {
+  if (!TypedArrayConstructor || !TypedArrayConstructor.prototype || typeof TypedArrayConstructor.prototype.forEach === "function") {
+    return;
+  }
+
+  Object.defineProperty(TypedArrayConstructor.prototype, "forEach", {
+    value: function forEachPolyfill(callback, thisArg) {
+      if (typeof callback !== "function") {
+        throw new TypeError("callback must be a function");
+      }
+      for (var index = 0; index < this.length; index += 1) {
+        callback.call(thisArg, this[index], index, this);
+      }
+    },
+    configurable: true,
+    writable: true
+  });
+}
+
+installTypedArrayForEachPolyfill(globalThis.Int8Array);
+installTypedArrayForEachPolyfill(globalThis.Uint8Array);
+installTypedArrayForEachPolyfill(globalThis.Uint8ClampedArray);
+installTypedArrayForEachPolyfill(globalThis.Int16Array);
+installTypedArrayForEachPolyfill(globalThis.Uint16Array);
+installTypedArrayForEachPolyfill(globalThis.Int32Array);
+installTypedArrayForEachPolyfill(globalThis.Uint32Array);
+installTypedArrayForEachPolyfill(globalThis.Float32Array);
+installTypedArrayForEachPolyfill(globalThis.Float64Array);
+
 if (!String.prototype.replaceAll) {
   Object.defineProperty(String.prototype, "replaceAll", {
     value: function replaceAll(searchValue, replaceValue) {
       var source = String(this);
       if (searchValue instanceof RegExp) {
-        return source.replace(new RegExp(searchValue.source, searchValue.flags.includes("g") ? searchValue.flags : searchValue.flags + "g"), replaceValue);
+        var flags = typeof searchValue.flags === "string" ? searchValue.flags : "";
+        if (!flags) {
+          flags += searchValue.global ? "g" : "";
+          flags += searchValue.ignoreCase ? "i" : "";
+          flags += searchValue.multiline ? "m" : "";
+        }
+        if (flags.indexOf("g") === -1) {
+          flags += "g";
+        }
+        return source.replace(new RegExp(searchValue.source, flags), replaceValue);
       }
       return source.split(String(searchValue)).join(String(replaceValue));
     },
@@ -150,6 +207,40 @@ if (!String.prototype.replaceAll) {
     writable: true
   });
 }
+
+function installStringPadPolyfill(methodName, padAtStart) {
+  if (typeof String.prototype[methodName] === "function") {
+    return;
+  }
+
+  Object.defineProperty(String.prototype, methodName, {
+    value: function stringPadPolyfill(targetLength, padString) {
+      var source = String(this);
+      var length = targetLength >> 0;
+      var fill = padString === undefined ? " " : String(padString);
+
+      if (source.length >= length) {
+        return source;
+      }
+
+      if (fill === "") {
+        fill = " ";
+      }
+
+      while (fill.length < length - source.length) {
+        fill += fill;
+      }
+
+      var padding = fill.slice(0, length - source.length);
+      return padAtStart ? padding + source : source + padding;
+    },
+    configurable: true,
+    writable: true
+  });
+}
+
+installStringPadPolyfill("padStart", true);
+installStringPadPolyfill("padEnd", false);
 
 if (!String.prototype.trimStart) {
   Object.defineProperty(String.prototype, "trimStart", {
@@ -169,6 +260,154 @@ if (!String.prototype.trimEnd) {
     configurable: true,
     writable: true
   });
+}
+
+if (typeof globalThis.URLSearchParams === "undefined") {
+  (function installURLSearchParamsPolyfill() {
+    function decode(value) {
+      return decodeURIComponent(String(value || "").replace(/\+/g, " "));
+    }
+
+    function encode(value) {
+      return encodeURIComponent(String(value)).replace(/%20/g, "+");
+    }
+
+    function URLSearchParamsPolyfill(init) {
+      this._entries = [];
+
+      if (!init) {
+        return;
+      }
+
+      if (typeof init === "string") {
+        var query = init.charAt(0) === "?" ? init.slice(1) : init;
+        if (!query) {
+          return;
+        }
+        var pairs = query.split("&");
+        for (var pairIndex = 0; pairIndex < pairs.length; pairIndex += 1) {
+          if (!pairs[pairIndex]) {
+            continue;
+          }
+          var separatorIndex = pairs[pairIndex].indexOf("=");
+          var name = separatorIndex === -1 ? pairs[pairIndex] : pairs[pairIndex].slice(0, separatorIndex);
+          var value = separatorIndex === -1 ? "" : pairs[pairIndex].slice(separatorIndex + 1);
+          this.append(decode(name), decode(value));
+        }
+        return;
+      }
+
+      if (typeof init.forEach === "function") {
+        var self = this;
+        init.forEach(function appendFromForEach(value, name) {
+          self.append(name, value);
+        });
+        return;
+      }
+
+      if (Array.isArray(init)) {
+        for (var index = 0; index < init.length; index += 1) {
+          if (init[index] && init[index].length >= 2) {
+            this.append(init[index][0], init[index][1]);
+          }
+        }
+        return;
+      }
+
+      if (typeof init === "object") {
+        for (var key in init) {
+          if (Object.prototype.hasOwnProperty.call(init, key)) {
+            this.append(key, init[key]);
+          }
+        }
+      }
+    }
+
+    URLSearchParamsPolyfill.prototype.append = function append(name, value) {
+      this._entries.push([String(name), String(value)]);
+    };
+
+    URLSearchParamsPolyfill.prototype.delete = function deleteParam(name) {
+      var key = String(name);
+      this._entries = this._entries.filter(function keep(entry) {
+        return entry[0] !== key;
+      });
+    };
+
+    URLSearchParamsPolyfill.prototype.get = function get(name) {
+      var key = String(name);
+      for (var index = 0; index < this._entries.length; index += 1) {
+        if (this._entries[index][0] === key) {
+          return this._entries[index][1];
+        }
+      }
+      return null;
+    };
+
+    URLSearchParamsPolyfill.prototype.getAll = function getAll(name) {
+      var key = String(name);
+      return this._entries
+        .filter(function keep(entry) {
+          return entry[0] === key;
+        })
+        .map(function toValue(entry) {
+          return entry[1];
+        });
+    };
+
+    URLSearchParamsPolyfill.prototype.has = function has(name) {
+      return this.get(name) !== null;
+    };
+
+    URLSearchParamsPolyfill.prototype.set = function set(name, value) {
+      var key = String(name);
+      var nextEntries = [];
+      var replaced = false;
+      for (var index = 0; index < this._entries.length; index += 1) {
+        if (this._entries[index][0] === key) {
+          if (!replaced) {
+            nextEntries.push([key, String(value)]);
+            replaced = true;
+          }
+        } else {
+          nextEntries.push(this._entries[index]);
+        }
+      }
+      if (!replaced) {
+        nextEntries.push([key, String(value)]);
+      }
+      this._entries = nextEntries;
+    };
+
+    URLSearchParamsPolyfill.prototype.forEach = function forEach(callback, thisArg) {
+      for (var index = 0; index < this._entries.length; index += 1) {
+        callback.call(thisArg, this._entries[index][1], this._entries[index][0], this);
+      }
+    };
+
+    URLSearchParamsPolyfill.prototype.toString = function toString() {
+      return this._entries.map(function serialize(entry) {
+        return encode(entry[0]) + "=" + encode(entry[1]);
+      }).join("&");
+    };
+
+    if (typeof Symbol === "function" && Symbol.iterator) {
+      URLSearchParamsPolyfill.prototype[Symbol.iterator] = function iterator() {
+        var entries = this._entries.slice();
+        var index = 0;
+        return {
+          next: function next() {
+            if (index >= entries.length) {
+              return { done: true };
+            }
+            return { done: false, value: entries[index++] };
+          }
+        };
+      };
+    }
+
+    globalThis.URLSearchParams = URLSearchParamsPolyfill;
+  }());
 }
 
 function installElementScrollToPolyfill(target) {

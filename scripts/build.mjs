@@ -10,6 +10,7 @@ import autoprefixer from 'autoprefixer';
 import postcssCustomProperties from 'postcss-custom-properties';
 import esbuildBabel from '@chialab/esbuild-plugin-babel';
 import { readAppMetadata, syncVersionFiles } from "./appMetadata.mjs";
+import { collectLegacyCustomProperties, legacyWebosCssCompat } from "./legacyCssCompat.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -29,7 +30,7 @@ const defaultEnvFileContents = `(function defineNuvioEnv() {
     DEBUG_LOG_ENDPOINT: "",
     WEBOS_SERVICE_ID: "",
     ENABLE_REMOTE_WRAPPER_MODE: false,
-    PREFERRED_PLAYBACK_ORDER: ["native-hls", "hls.js", "dash.js", "native-file", "platform-avplay"],
+    PREFERRED_PLAYBACK_ORDER: ["native-hls", "native-dash", "native-file", "hls.js", "dash.js", "platform-avplay"],
     TMDB_API_KEY: ""
   };
 }());
@@ -40,16 +41,21 @@ async function buildCSS() {
   const cssDir = path.join(rootDir, "css");
   const files = await readdir(cssDir);
   const cssFiles = files.filter(f => f.endsWith(".css"));
+  const cssSources = await Promise.all(cssFiles.map(async (file) => ({
+    file,
+    css: await readFile(path.join(cssDir, file), "utf8")
+  })));
+  const customProperties = collectLegacyCustomProperties(cssSources.map(({ css }) => css));
 
-  for (const file of cssFiles) {
+  for (const { file, css } of cssSources) {
     const cssPath = path.join(cssDir, file);
     const outPath = path.join(distDir, "css", file);
 
-    const css = await readFile(cssPath, 'utf8');
     const result = await postcss([
       postcssGlobalData({ files: [path.join(cssDir, "base.css")] }),
-      postcssCustomProperties({ preserve: false }), 
+      postcssCustomProperties({ preserve: false }),
       autoprefixer({ overrideBrowserslist: ['Chrome 38'], grid: "autoplace" }),
+      legacyWebosCssCompat({ customProperties }),
       cssnano()
     ]).process(css, { from: cssPath, to: outPath });
 
@@ -98,7 +104,7 @@ async function buildBundle() {
     outfile: tempBundlePath,
     bundle: true,
     format: "iife",
-    target: ["es2015"], 
+    target: ["es2015"],
     define: { "process.env.NODE_ENV": '"production"', __NUVIO_APP_VERSION__: JSON.stringify(version) }
   });
 
@@ -108,7 +114,7 @@ async function buildBundle() {
     presets: [
       ["@babel/preset-env", {
         targets: "chrome 38",
-        useBuiltIns: "entry", 
+        useBuiltIns: "usage",
         corejs: 3,
       }]
     ],
@@ -152,7 +158,7 @@ async function runBuild() {
     console.log("cleaning dist directory...");
     await rm(distDir, { recursive: true, force: true });
     await mkdir(distDir, { recursive: true });
-    
+
     console.log("building version files...");
     await syncVersionFiles();
     await buildCSS();
@@ -190,7 +196,7 @@ async function runBuild() {
   } catch (error) {
     console.error("\nbuild failed:");
     console.error(error);
-    process.exit(1); 
+    process.exit(1);
   }
 }
 

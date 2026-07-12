@@ -25,7 +25,7 @@ const defaultEnvFileContents = `(function defineNuvioEnv() {
     DEBUG_LOG_ENDPOINT: "",
     WEBOS_SERVICE_ID: "space.nuvio.webos.service",
     ENABLE_REMOTE_WRAPPER_MODE: false,
-    PREFERRED_PLAYBACK_ORDER: ["native-hls", "hls.js", "dash.js", "native-file", "platform-avplay"],
+    PREFERRED_PLAYBACK_ORDER: ["native-hls", "native-dash", "native-file", "hls.js", "dash.js", "platform-avplay"],
     TMDB_API_KEY: ""
   });
 }());

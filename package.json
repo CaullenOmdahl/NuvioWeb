@@ -5,6 +5,7 @@
   "version": "0.1.5",
   "scripts": {
     "build": "node ./scripts/build.mjs",
+    "check:webos-legacy": "node ./scripts/checkLegacyWebosCompat.mjs",
     "build:on-release": "node ./scripts/release-build-poller.mjs",
     "install:webos": "node ./scripts/ares-install-webos.mjs",
     "inspect:webos": "node ./scripts/ares-inspect-webos.mjs",
@@ -37,6 +38,7 @@
     "@chialab/esbuild-plugin-babel": "^0.19.1",
     "@csstools/postcss-global-data": "^4.0.0",
     "@tauri-apps/cli": "^2.10.1",
+    "@webos-tools/cli": "^3.2.5",
     "autoprefixer": "^10.4.27",
     "babel-loader": "^10.1.1",
     "core-js": "^3.49.0",

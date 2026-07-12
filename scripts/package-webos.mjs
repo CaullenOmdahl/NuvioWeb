@@ -1,6 +1,6 @@
 import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -13,12 +13,11 @@ const distDir = path.join(rootDir, "dist");
 const cacheDir = path.join(rootDir, ".cache");
 const stagingDir = path.join(cacheDir, "webos-package");
 const appStageDir = path.join(stagingDir, "app");
-const serviceStageDir = path.join(stagingDir, "com.nuvio.lg.service");
+const serviceStageDir = path.join(stagingDir, "com.caullen.nuvio.legacy.service");
 const serviceTempBundlePath = path.join(stagingDir, "__webos-service.bundle.js");
 
-const appName = "Nuvio TV";
-const webOsServiceId = "com.nuvio.lg.service";
-const webOsServiceSourceDir = path.join(rootDir, "services", webOsServiceId);
+const webOsServiceId = "com.caullen.nuvio.legacy.service";
+const webOsServiceSourceDir = path.join(rootDir, "services", "com.nuvio.lg.service");
 
 async function assertDistExists() {
   try {
@@ -49,7 +48,7 @@ async function resolveWebOsScriptPath(targetDir) {
   return `${webOsDirName}/webOSTV.js`;
 }
 
-function buildWebOsIndexHtml({ webOsScriptPath = "" } = {}) {
+function buildWebOsIndexHtml({ title = "Nuvio TV", webOsScriptPath = "" } = {}) {
   const webOsScriptTag = webOsScriptPath
     ? `  <script src="${webOsScriptPath}"></script>\n`
     : "";
@@ -60,7 +59,7 @@ function buildWebOsIndexHtml({ webOsScriptPath = "" } = {}) {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <title>${appName}</title>
+  <title>${title}</title>
   <link rel="stylesheet" href="css/base.css" />
   <link rel="stylesheet" href="css/layout.css" />
   <link rel="stylesheet" href="css/components.css" />
@@ -99,12 +98,12 @@ async function injectWebOsRuntimeEnv(targetDir) {
 }
 
 async function stageApp() {
-  const { version } = await readAppMetadata();
+  const { title, version } = await readAppMetadata();
   await cp(distDir, appStageDir, { recursive: true });
 
   const appInfoPath = path.join(appStageDir, "appinfo.json");
   const appInfo = JSON.parse(await readFile(appInfoPath, "utf8"));
-  appInfo.title = appName;
+  appInfo.title = title;
   appInfo.version = version;
   appInfo.icon = "icon.png";
   appInfo.largeIcon = "largeIcon.png";
@@ -117,7 +116,7 @@ async function stageApp() {
   ]);
 
   const webOsScriptPath = await resolveWebOsScriptPath(appStageDir);
-  await writeFile(path.join(appStageDir, "index.html"), buildWebOsIndexHtml({ webOsScriptPath }), "utf8");
+  await writeFile(path.join(appStageDir, "index.html"), buildWebOsIndexHtml({ title, webOsScriptPath }), "utf8");
   await injectWebOsRuntimeEnv(appStageDir);
 }
 
@@ -161,9 +160,42 @@ async function stageService() {
   await rm(serviceTempBundlePath, { force: true });
 }
 
+function resolveCommand(command) {
+  const fromEnv = command === "ares-package" ? String(process.env.ARES_PACKAGE_BIN || "").trim() : "";
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  const result = spawnSync("which", [command], { encoding: "utf8" });
+  const executablePath = String(result.stdout || "").trim();
+  if (result.status === 0 && executablePath) {
+    return executablePath;
+  }
+
+  const localCommand = path.join(rootDir, "node_modules", ".bin", command);
+  if (spawnSync("test", ["-x", localCommand]).status === 0) {
+    return localCommand;
+  }
+
+  return path.join(
+    "/Applications",
+    "Nuvio WebTV Installer.app",
+    "Contents",
+    "Resources",
+    "app.asar.unpacked",
+    "node_modules",
+    "@webos-tools",
+    "cli",
+    "bin",
+    `${command}.js`
+  );
+}
+
 function runCommand(command, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const resolvedCommand = resolveCommand(command);
+    const usesNodeScript = resolvedCommand.endsWith(".js");
+    const child = spawn(usesNodeScript ? process.execPath : resolvedCommand, usesNodeScript ? [resolvedCommand, ...args] : args, {
       cwd: rootDir,
       stdio: "inherit"
     });
